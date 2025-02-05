@@ -19,7 +19,7 @@ import argparse
 parser = argparse.ArgumentParser()
 
 ## Device and batch size
-parser.add_argument('--device', type=str, default='cuda:0', help='')
+parser.add_argument('--device', type=str, default='cpu', help='')
 parser.add_argument('--trained_model_path',type=str, default='trained_weights/PDBv2020_PSICHIC')
 parser.add_argument('--batch_size', type=int, default=16)
 ## Data and Pre-processing
@@ -46,7 +46,7 @@ print(args)
 with open(os.path.join(args.result_path, 'screening_params.txt'), 'w') as f:
     f.write(str(args))
 
-degree_dict = torch.load(os.path.join(args.trained_model_path,'degree.pt'))
+degree_dict = torch.load(os.path.join(args.trained_model_path,'degree.pt'), weights_only=True)
 param_dict = os.path.join(args.trained_model_path,'model.pt')
 mol_deg, prot_deg = degree_dict['ligand_deg'],degree_dict['protein_deg']
 
@@ -66,7 +66,7 @@ model = net(mol_deg, prot_deg,
             multiclassification_head=config['tasks']['mclassification_task'],
             device=device).to(device)
 model.reset_parameters()    
-model.load_state_dict(torch.load(param_dict,map_location=args.device))
+model.load_state_dict(torch.load(param_dict,map_location=args.device, weights_only=True))
 
 
 screen_df = pd.read_csv(os.path.join(args.screenfile))

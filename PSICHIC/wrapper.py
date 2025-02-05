@@ -22,7 +22,8 @@ class PsichicWrapper:
             
     def load_model(self):
         degree_dict = torch.load(os.path.join(self.runtime_config.MODEL_PATH,
-                                              'degree.pt')
+                                              'degree.pt'), 
+                                 weights_only=True
                                  )
         param_dict = os.path.join(self.runtime_config.MODEL_PATH, 'model.pt')
         mol_deg, prot_deg = degree_dict['ligand_deg'], degree_dict['protein_deg']
@@ -48,7 +49,11 @@ class PsichicWrapper:
                          multiclassification_head=self.model_config['tasks']['mclassification_task'],
                          device=self.device).to(self.device)
         self.model.reset_parameters()    
-        self.model.load_state_dict(torch.load(param_dict, map_location=self.device))
+        self.model.load_state_dict(torch.load(param_dict, 
+                                              map_location=self.device, 
+                                              weights_only=True
+                                              )
+                                   )
         
     def initialize_protein(self, protein_seq:str) -> dict:
         self.protein_seq = [protein_seq]
