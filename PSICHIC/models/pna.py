@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 from torch.nn import ModuleList, Sequential
 
-from models.scaler import DegreeScalerAggregation
+from .scaler import DegreeScalerAggregation
 # from models.pna_scaler import DegreeScalerAggregation
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.nn.dense.linear import Linear

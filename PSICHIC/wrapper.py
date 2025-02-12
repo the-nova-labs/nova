@@ -5,12 +5,12 @@ import os
 import pandas as pd
 import torch
 
-from utils.dataset import ProteinMoleculeDataset
-from utils.utils import DataLoader, virtual_screening
-from utils import protein_init, ligand_init
-from models.net import net
+from .psichic_utils.dataset import ProteinMoleculeDataset
+from .psichic_utils.data_utils import DataLoader, virtual_screening
+from .psichic_utils import protein_init, ligand_init
+from .models.net import net
 
-from runtime_config import RuntimeConfig
+from .runtime_config import RuntimeConfig
 
 class PsichicWrapper:
     def __init__(self):

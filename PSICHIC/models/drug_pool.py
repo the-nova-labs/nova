@@ -4,7 +4,7 @@ from torch_geometric.utils import softmax
 
 from torch_scatter import scatter
 from torch_geometric.nn import global_add_pool
-from models.layers import MLP, dropout_node
+from .layers import MLP, dropout_node
 
 class MotifPool(torch.nn.Module):
     def __init__(self, hidden_dim, heads, dropout_attn_score=0, dropout_node_proba=0): 

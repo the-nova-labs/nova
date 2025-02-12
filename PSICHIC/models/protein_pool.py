@@ -1,7 +1,7 @@
 import torch
 
 EPS = 1e-15
-from models.layers import *
+from .layers import *
 
 def dense_mincut_pool(x, adj, s, mask=None, cluster_drop_node=None):
     r"""The MinCut pooling operator from the `"Spectral Clustering in Graph

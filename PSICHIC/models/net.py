@@ -6,13 +6,13 @@ import torch.nn.functional as F
 from torch_scatter import scatter
 import numpy as np
 import scipy.sparse as sp
-from models.layers import MLP, AtomEncoder, Drug_PNAConv, Protein_PNAConv, DrugProteinConv, PosLinear, GCNCluster, SAGECluster, SGCluster, APPNPCluster, dropout_edge
+from .layers import MLP, AtomEncoder, Drug_PNAConv, Protein_PNAConv, DrugProteinConv, PosLinear, GCNCluster, SAGECluster, SGCluster, APPNPCluster, dropout_edge
 from copy import deepcopy
 ## for drug pooling
-from models.drug_pool import MotifPool
+from .drug_pool import MotifPool
 ## for cluster
 from torch_geometric.utils import dense_to_sparse, to_dense_adj, to_dense_batch, dropout_adj, degree, subgraph, softmax, add_remaining_self_loops
-from models.protein_pool import dense_mincut_pool , dense_dmon_pool, simplify_pool
+from .protein_pool import dense_mincut_pool , dense_dmon_pool, simplify_pool
 ## for cluster
 from torch_geometric.nn.norm import GraphNorm
 import torch_geometric

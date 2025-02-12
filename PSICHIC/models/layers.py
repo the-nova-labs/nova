@@ -3,7 +3,7 @@ from typing import Optional, Tuple, Union
 
 import torch.nn as nn
 import torch.nn.functional as F
-from models.pna import PNAConv
+from .pna import PNAConv
 import torch
 
 from torch import Tensor
