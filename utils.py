@@ -1,6 +1,23 @@
 import requests
+import os
 import sys
 import json
+
+def get_smiles(product_name):
+
+    api_key = os.environ.get("validator_api_key")
+    if not api_key:
+        raise ValueError("validator_api_key environment variable not set.")
+
+    url = f"https://8vzqr9wt22.execute-api.us-east-1.amazonaws.com/dev/smiles/{product_name}"
+
+    headers = {"x-api-key": api_key}
+    
+    response = requests.get(url, headers=headers)
+
+    data = response.json()
+
+    return data.get("smiles")
 
 def get_sequence_from_protein_code(protein_code:str) -> str:
 
