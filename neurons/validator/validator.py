@@ -10,7 +10,7 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(BASE_DIR)
 
 from protocol import ChallengeSynapse
-from utils import get_smiles
+from utils import get_smiles, get_in_progress_target_protein
 from neurons.validator.db_manager import DBManager
 from PSICHIC.wrapper import PsichicWrapper
 from substrateinterface import SubstrateInterface
@@ -113,9 +113,10 @@ class Validator:
         
         return result
     
-    def query_and_store_challenge_results(self):
+    
+    def query_and_store_challenge_results(self, target_protein):
         """
-        1) Create a ChallengeSynapse with a fixed target_protein (for now).
+        1) Create a ChallengeSynapse with a given target_protein.
         2) Query all miners.
         3) Convert each product_name to SMILES.
         4) Score them with PsichicWrapper.
@@ -124,7 +125,7 @@ class Validator:
 
         # Build a ChallengeSynapse with a hardcoded protein (for now).
         synapse = ChallengeSynapse(
-            target_protein = "MKSILDGLADTTFRTITTDLLYVGSNDIQYEDIKGDMASKLGYFPQKSPLTSFRGSPFQEKMTAGDNPQLVPADQVNITEFYNKSLSSFKENEENIQCGENFMDIECFMVLNPSQQLAIAVLSLTLGTFTVLENLLVLCVILHSRSLRCRPSYHFIGSLAVADLLGSVIFVYSFIDFHVFHRKDSRNVFLFKLGGVTASFTASVGSLFLTAIDRYISIHRPLAYKRIVTRPKAVVAFCLMWTIAIVIAVLPLLGWNCEKLQSVCSDILPHIDETYLMLWIGVTSVLLLFIVYAYMYILWKAHSHAVRMIQRGAQKSIIIHTSEDGKVQVTRPDQARMDIRLAKTLVLILVVLIICWGPLLAIMVYDVFGKMNKLIKTVFAFCSMLCLLNSTVNPIIYALRSKDLRHAFRSMFPSCGGTAQPLDNSMGDSDCLHKHANNAASVHRAAESCIKSTVKIAKVTMSVSTDTSAEAL"  # Example protein
+            target_protein = target_protein
         )
 
         # Get validator's hotkey to avoid querying itself
@@ -204,8 +205,13 @@ class Validator:
         bt.logging.info("Starting validator loop.")
         while True:
             try:
-                self.query_and_store_challenge_results()
-                time.sleep(10)  # wait between queries
+                target_protein = get_in_progress_target_protein()
+                if target_protein:
+                    self.query_and_store_challenge_results(target_protein)
+                else:
+                    bt.logging.info("No in_progress challenge found.")
+                time.sleep(10)
+
 
             except RuntimeError as e:
                 bt.logging.error(e)
