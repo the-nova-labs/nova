@@ -5,6 +5,10 @@ import traceback
 import bittensor as bt
 from typing import Tuple
 import random
+import sys
+
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(BASE_DIR)
 
 from protocol import ChallengeSynapse
 
