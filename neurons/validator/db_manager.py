@@ -23,6 +23,7 @@ class DBManager:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS miner_bests (
                 miner_uid INTEGER PRIMARY KEY,
+                miner_hotkey TEXT,
                 best_smiles TEXT,
                 best_score REAL
             )
@@ -31,7 +32,7 @@ class DBManager:
         conn.commit()
         conn.close()
 
-    def update_best_score(self, miner_uid: int, smiles: str, score: float):
+    def update_best_score(self, miner_uid: int, miner_hotkey: str, smiles: str, score: float):
         """
         Inserts or updates a single miner's best smiles and score.
         """
@@ -41,25 +42,25 @@ class DBManager:
         miner_uid = int(miner_uid)
         score = float(score)
 
-        # Fetch current record
+        # Check if there's an existing record for this miner_uid
         cursor.execute("SELECT best_score FROM miner_bests WHERE miner_uid = ?", (miner_uid,))
         row = cursor.fetchone()
 
         if row is None:
-            # No entry yet, insert
+            # No entry yet, so insert a new record
             cursor.execute("""
-                INSERT INTO miner_bests (miner_uid, best_smiles, best_score)
-                VALUES (?, ?, ?)
-            """, (miner_uid, smiles, score))
+                INSERT INTO miner_bests (miner_uid, miner_hotkey, best_smiles, best_score)
+                VALUES (?, ?, ?, ?)
+            """, (miner_uid, miner_hotkey, smiles, score))
         else:
             current_best_score = row[0]
-            # Only update if new score is higher
+            # Only update if the new score is higher than the existing one
             if score > current_best_score:
                 cursor.execute("""
-                    UPDATE miner_bests 
-                    SET best_smiles = ?, best_score = ?
+                    UPDATE miner_bests
+                    SET miner_hotkey = ?, best_smiles = ?, best_score = ?
                     WHERE miner_uid = ?
-                """, (smiles, score, miner_uid))
+                """, (miner_hotkey, smiles, score, miner_uid))
 
         conn.commit()
         conn.close()
@@ -78,4 +79,3 @@ class DBManager:
             return row[0], row[1]
         else:
             return None, 0
-
