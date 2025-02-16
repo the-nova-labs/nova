@@ -38,6 +38,9 @@ class DBManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
+        miner_uid = int(miner_uid)
+        score = float(score)
+
         # Fetch current record
         cursor.execute("SELECT best_score FROM miner_bests WHERE miner_uid = ?", (miner_uid,))
         row = cursor.fetchone()
