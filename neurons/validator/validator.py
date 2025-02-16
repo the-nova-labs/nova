@@ -149,8 +149,10 @@ class Validator:
         miner_submissions = {}
         for i, resp in enumerate(responses):
             if resp is not None and resp.product_name is not None:
-                miner_uid = self.metagraph.uids[i]
+                miner_hotkey = filtered_axons[i].hotkey
+                miner_uid = self.metagraph.hotkeys.index(miner_hotkey)
                 miner_submissions[miner_uid] = resp.product_name
+
 
         bt.logging.info(f"Collected product_name from {len(miner_submissions)} miners: {miner_submissions}")
 
@@ -189,6 +191,7 @@ class Validator:
                 # Update each miner’s best submission in the DB
                 self.db.update_best_score(
                     miner_uid = matched_uid,
+                    miner_hotkey = miner_hotkey,
                     smiles = ligand_smiles,
                     score = float(predicted_score)
                 )
