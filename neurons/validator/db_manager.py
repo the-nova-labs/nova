@@ -39,13 +39,13 @@ class DBManager:
         cursor = conn.cursor()
 
         # Fetch current record
-        cursor.execute("SELECT best_score FROM miner_best WHERE miner_uid = ?", (miner_uid,))
+        cursor.execute("SELECT best_score FROM miner_bests WHERE miner_uid = ?", (miner_uid,))
         row = cursor.fetchone()
 
         if row is None:
             # No entry yet, insert
             cursor.execute("""
-                INSERT INTO miner_best (miner_uid, best_smiles, best_score)
+                INSERT INTO miner_bests (miner_uid, best_smiles, best_score)
                 VALUES (?, ?, ?)
             """, (miner_uid, smiles, score))
         else:
@@ -53,7 +53,7 @@ class DBManager:
             # Only update if new score is higher
             if score > current_best_score:
                 cursor.execute("""
-                    UPDATE miner_best 
+                    UPDATE miner_bests 
                     SET best_smiles = ?, best_score = ?
                     WHERE miner_uid = ?
                 """, (smiles, score, miner_uid))
@@ -67,7 +67,7 @@ class DBManager:
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("SELECT best_smiles, best_score FROM miner_best WHERE miner_uid = ?", (miner_uid,))
+        cursor.execute("SELECT best_smiles, best_score FROM miner_bests WHERE miner_uid = ?", (miner_uid,))
         row = cursor.fetchone()
         conn.close()
 
