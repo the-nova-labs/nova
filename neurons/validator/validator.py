@@ -4,6 +4,10 @@ import argparse
 import traceback
 import bittensor as bt
 import time
+import sys
+
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.append(BASE_DIR)
 
 from protocol import ChallengeSynapse
 from utils import get_smiles
@@ -166,14 +170,15 @@ class Validator:
 
         #  Score all SMILES via PsichicWrapper
         smiles_list = list(uid_to_smiles.values())
+        self.psichic.run_challenge_start(synapse.target_protein)
         results_df = self.psichic.run_validation(smiles_list)
-        # Typically returns a DataFrame with columns like ['Protein', 'Ligand', 'predicted_score']
+        # Returns a DataFrame with columns like ['Protein', 'Ligand', 'predicted_binding_affinity']
         bt.logging.info(f"Scoring results:\n{results_df}")
 
         # Map each row back to the correct miner (by matching SMILES)
         for idx, row in results_df.iterrows():
             ligand_smiles = row['Ligand'] 
-            predicted_score = row['predicted_score'] 
+            predicted_score = row['predicted_binding_affinity'] 
             matched_uid = None
             for uid, smi in uid_to_smiles.items():
                 if smi == ligand_smiles:
