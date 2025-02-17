@@ -37,7 +37,6 @@ def get_sequence_from_protein_code(protein_code:str) -> str:
         return amino_acid_sequence
     
 
-
 def get_in_progress_target_protein():
     """
     Returns target_protein from the first challenge with status='in_progress',
@@ -68,7 +67,14 @@ def get_in_progress_target_protein():
         row = cur.fetchone()
         cur.close()
         conn.close()
-        return row[0] if row else None
+        
+        if row:
+            protein_code = row[0]
+            sequence = get_sequence_from_protein_code(protein_code)
+            return sequence  # returns the amino-acid sequence
+        else:
+            return None
+        
     except Exception as e:
         if conn:
             conn.close()
