@@ -4,14 +4,28 @@ import argparse
 import traceback
 import bittensor as bt
 from typing import Tuple
+import random
+import sys
 
-from protocol import Dummy
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(BASE_DIR)
+
+from protocol import ChallengeSynapse
 
 class Miner:
     def __init__(self):
         self.config = self.get_config()
         self.setup_logging()
         self.setup_bittensor_objects()
+
+        self.possible_products_ids = [
+            "61A77BD3826E0AD0_554BFAE008D564C8_6031_UN",
+            "0D478AE9F05191D4_9B5CA2C45361352F_6031_UN",
+            "F50EDCF3F53CBDF8_6B044A996DB48BAE_6031_UN",
+            "1ACADF44CE73C91D_1AEC4E56E4BD7275_6031_UN",
+            "8414B52945073B32_8BE24EA78A011AE1_6031_UN",
+            "not_exist_test"
+        ]
 
     def get_config(self):
         # Set up the configuration parser
@@ -59,7 +73,7 @@ class Miner:
         bt.logging.info(f"Wallet: {self.wallet}")
 
         # Initialize subtensor.
-        self.subtensor = bt.subtensor(config=self.config)
+        self.subtensor = bt.subtensor(network="test")
         bt.logging.info(f"Subtensor: {self.subtensor}")
 
         # Initialize metagraph.
@@ -74,7 +88,7 @@ class Miner:
             self.my_subnet_uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
             bt.logging.info(f"Running miner on uid: {self.my_subnet_uid}")
 
-    def blacklist_fn(self, synapse: Dummy) -> Tuple[bool, str]:
+    def blacklist_fn(self, synapse: ChallengeSynapse) -> Tuple[bool, str]:
         # Ignore requests from unrecognized entities.
         if synapse.dendrite.hotkey not in self.metagraph.hotkeys:
             bt.logging.trace(f'Blacklisting unrecognized hotkey {synapse.dendrite.hotkey}')
@@ -82,10 +96,10 @@ class Miner:
         bt.logging.trace(f'Not blacklisting recognized hotkey {synapse.dendrite.hotkey}')
         return False, None
 
-    def dummy(self, synapse: Dummy) -> Dummy:
-        # Simple logic: return the input value multiplied by 2.
-        synapse.dummy_output = synapse.dummy_input * 2
-        bt.logging.info(f"Received input: {synapse.dummy_input}, sending output: {synapse.dummy_output}")
+    def respond_challenge(self, synapse: ChallengeSynapse) -> ChallengeSynapse:
+        # Simple logic: return the random product_name from the list of possible products.
+        synapse.product_name = random.choice(self.possible_products_ids)
+        bt.logging.info(f"Received input: {synapse.target_protein}, sending output: {synapse.product_name}")
         return synapse
 
     def setup_axon(self):
@@ -95,7 +109,7 @@ class Miner:
         # Attach functions to the axon.
         bt.logging.info(f"Attaching forward function to axon.")
         self.axon.attach(
-            forward_fn=self.dummy,
+            forward_fn=self.respond_challenge,
             blacklist_fn=self.blacklist_fn,
         )
 

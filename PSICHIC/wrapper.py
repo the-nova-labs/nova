@@ -100,4 +100,5 @@ class PsichicWrapper:
                                            device=self.device,
                                            save_cluster=False,
                                            )
+        return self.screen_df
         
