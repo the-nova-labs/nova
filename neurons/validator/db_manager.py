@@ -25,7 +25,8 @@ class DBManager:
                 miner_uid INTEGER PRIMARY KEY,
                 miner_hotkey TEXT,
                 best_smiles TEXT,
-                best_score REAL
+                best_score REAL,
+                bounty_points INTEGER DEFAULT 0
             )
         """)
 
@@ -79,3 +80,39 @@ class DBManager:
             return row[0], row[1]
         else:
             return None, 0
+        
+    def award_bounty(self, bounty_value: int):
+        """
+        Finds the row with the highest best_score and adds `bounty_value` to that miner's bounty_points.
+        If the table is empty, or all best_score entries are NULL, does nothing.
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        # Find the miner with the highest best_score
+        cursor.execute("""
+            SELECT miner_uid, bounty_points
+            FROM miner_bests
+            ORDER BY best_score DESC
+            LIMIT 1
+        """)
+        row = cursor.fetchone()
+
+        # If there is at least one row, award bounty to that miner
+        if row is not None:
+            miner_uid, current_bounty_points = row
+
+            # If current_bounty_points is None, treat as 0
+            if current_bounty_points is None:
+                current_bounty_points = 0
+
+            new_bounty_points = current_bounty_points + bounty_value
+
+            cursor.execute("""
+                UPDATE miner_bests
+                SET bounty_points = ?
+                WHERE miner_uid = ?
+            """, (new_bounty_points, miner_uid))
+
+        conn.commit()
+        conn.close()
