@@ -10,7 +10,7 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(BASE_DIR)
 
 from protocol import ChallengeSynapse
-from utils import get_smiles, get_in_progress_target_protein
+from utils import get_smiles, get_active_challenge
 from neurons.validator.db_manager import DBManager
 from PSICHIC.wrapper import PsichicWrapper
 from substrateinterface import SubstrateInterface
@@ -32,6 +32,7 @@ class Validator:
         self.node = SubstrateInterface(url=self.config.subtensor.chain_endpoint)
         self.db = DBManager()
         self.psichic = PsichicWrapper()
+        self.finalized_challenge = False
 
     def get_config(self):
         # Set up the configuration parser.
@@ -197,7 +198,102 @@ class Validator:
                     score = float(predicted_score)
                 )
 
+        # Award bounty to the miner with the highest score
+        self.db.award_bounty(1)
+
         bt.logging.info("Done updating best scores in DB.")
+
+    def finalize_challenge(self, challenge_id: int, protein_code: str):
+        """
+        Finalizes a challenge by:
+         1. Gathering the final scoreboard from the local DB.
+         2. Setting on-chain weights.
+         3. Exporting the scoreboard to a CSV.
+         4. TODO: Upload the CSV to S3.
+        """
+        bt.logging.info(f"Finalizing challenge {challenge_id}...")
+
+        scoreboard = self.get_final_scoreboard()
+        if not scoreboard:
+            bt.logging.info("No entries found in scoreboard; skipping weights and export.")
+            return
+
+        self.set_challenge_weights(scoreboard)
+
+        csv_path = self.export_scoreboard_to_csv(challenge_id, scoreboard)
+        bt.logging.info(f"Exported final scoreboard to {csv_path}")
+
+        #Upload to S3
+
+    def get_final_scoreboard(self):
+        """
+        Retrieves the best scores and bounty points for each miner from the local DB and
+        returns a dict scoreboard
+        """
+        best_scores_data = self.db.get_all_best_scores()  # Add this method to DBManager
+        scoreboard = {}
+        for row in best_scores_data:
+            uid, hotkey, best_smiles, best_score, bounty_points = row
+            scoreboard[uid] = {
+                'hotkey': hotkey,
+                'best_smiles': best_smiles,
+                'best_score': best_score,
+                'bounty_points': bounty_points
+            }
+        return scoreboard
+
+    def set_challenge_weights(self, scoreboard: dict):
+        """
+        Normalizes each miner's best_score and calls Bittensor to set weights on-chain.
+        """
+        max_score = max(entry['best_score'] for entry in scoreboard.values())
+        if max_score <= 0:
+            bt.logging.info("Max score <= 0; skipping on-chain weight update.")
+            return
+
+        total_miners = len(self.metagraph.hotkeys)
+        weights = []
+        for uid in range(total_miners):
+            entry = scoreboard.get(uid)
+            if entry:
+                normalized = entry['best_score'] / max_score
+            else:
+                normalized = 0.0
+            weights.append(normalized)
+
+        try:
+            self.subtensor.set_weights(
+                netuid=self.config.netuid,
+                uids=list(range(total_miners)),
+                weights=weights
+            )
+            bt.logging.info("Successfully set weights on chain.")
+        except Exception as e:
+            bt.logging.error(f"Error calling set_weights: {e}")
+
+    def export_scoreboard_to_csv(self, challenge_id: int, scoreboard: dict) -> str:
+        """
+        Writes scoreboard data (including bounty_points) to a CSV file and returns the local file path.
+        """
+        csv_dir = os.path.join(BASE_DIR, "temp_data")
+        os.makedirs(csv_dir, exist_ok=True)
+
+        filename = f"challenge_{challenge_id}_scoreboard.csv"
+        csv_path = os.path.join(csv_dir, filename)
+
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["miner_uid", "hotkey", "best_score", "best_smiles", "bounty_points"])
+            for uid, data in scoreboard.items():
+                writer.writerow([
+                    uid,
+                    data.get('hotkey', ''),
+                    data.get('best_score', 0),
+                    data.get('best_smiles', ''),
+                    data.get('bounty_points', 0)
+                ])
+
+        return csv_path
 
 
     def run(self):
@@ -205,11 +301,30 @@ class Validator:
         bt.logging.info("Starting validator loop.")
         while True:
             try:
-                target_protein = get_in_progress_target_protein()
-                if target_protein:
-                    self.query_and_store_challenge_results(target_protein)
-                else:
-                    bt.logging.info("No in_progress challenge found.")
+                # Retrieve the challenge (if any) that is not finished
+                challenge = get_active_challenge()
+
+                if challenge is None:
+                    bt.logging.info("No active challenge found. Sleeping...")
+                    time.sleep(10)
+                    continue
+
+                status = challenge["status"]
+                challenge_id = challenge["challenge_id"]
+                protein_code = challenge["target_protein"]
+
+                if status == "in_progress":
+                    self.finalized_challenge = False
+                    self.query_and_store_challenge_results(protein_code)
+
+                elif status == "finalizing":
+                    if not self.finalized_challenge:
+                        self.finalize_challenge(challenge_id, protein_code)
+                        self.finalized_challenge = True
+
+                elif status == "finished":
+                    bt.logging.info(f"Challenge {challenge_id} is finished. No action taken.")
+                
                 time.sleep(10)
 
 
