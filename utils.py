@@ -72,7 +72,7 @@ def get_active_challenge():
         
         if row:
             return {
-                "id": row[0],
+                "challenge_id": row[0],
                 "target_protein": get_sequence_from_protein_code(row[1]),
                 "status": row[2]
             }
@@ -85,21 +85,6 @@ def get_active_challenge():
         bt.logging.warning(f"Error retrieving active challenge: {e}")
         return None
 
-if __name__ == '__main__':
-    protein_codes = [
-            'P21554',
-            'P28223',
-            'doesnt_exist',
-            'P43220'
-            ]
-
-    for protein_code in protein_codes:
-        sequence = get_sequence_from_protein_code(protein_code)
-
-        if not sequence:
-            print(f'{protein_code}: Not found')
-        else:
-            print(f'{protein_code}: {sequence}')
 
 
 
