@@ -226,6 +226,9 @@ class Validator:
 
         #Upload to S3
 
+        self.db.clear_db()
+        bt.logging.info("Local DB cleared after finalizing the challenge.")
+
     def get_final_scoreboard(self):
         """
         Retrieves the best scores and bounty points for each miner from the local DB and
