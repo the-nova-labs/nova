@@ -123,6 +123,24 @@ class Miner:
         return batched
 
     def run_psichic_model_loop(self):
+        """
+        Continuously runs the PSICHIC model on batches of molecules from the dataset.
+
+        This method streams random chunks of molecule data from a Hugging Face dataset,
+        processes them through the PSICHIC model to predict binding affinities, and updates
+        the best candidate when a higher scoring molecule is found. Runs in a separate thread
+        until the shutdown event is triggered.
+
+        The method:
+        1. Streams data in chunks from the dataset
+        2. Cleans the product names and SMILES strings
+        3. Runs PSICHIC predictions on each chunk
+        4. Updates the best candidate if a higher score is found
+        5. Continues until shutdown_event is set
+
+        Raises:
+            Exception: Logs any errors during execution and sets the shutdown event
+        """
         dataset = self.stream_random_chunk_from_dataset()
         while not self.shutdown_event.is_set():
             try:
@@ -146,6 +164,25 @@ class Miner:
                 self.shutdown_event.set()      
 
     def respond_challenge(self, synapse: ChallengeSynapse) -> ChallengeSynapse:
+        """
+        Responds to protein binding challenges by suggesting product molecules.
+
+        This method manages the continuous process of finding optimal binding products for a given target protein.
+        When a new target protein is received, it initializes a new PSICHIC model instance and starts a background
+        thread to continuously search for better binding candidates.
+
+        Args:
+            synapse (ChallengeSynapse): Contains the target protein sequence and other challenge parameters.
+
+        Returns:
+            ChallengeSynapse: Returns the updated synapse object with the best candidate product name if a new
+                             candidate is found, otherwise returns None.
+
+        Note:
+            - The method maintains state between calls to track the current challenge protein and best candidates
+            - Uses threading to continuously search for better binding candidates in the background
+            - Only returns a response when a new, better candidate is found
+        """
 
         bt.logging.info(f"Received input: {synapse.target_protein}")
 
