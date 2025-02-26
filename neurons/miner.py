@@ -8,7 +8,8 @@ import sys
 import threading
 
 import bittensor as bt
-from huggingface_hub import list_repo_files, hf_hub_download
+from datasets import load_dataset
+from huggingface_hub import list_repo_files
 import pandas as pd
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -21,9 +22,8 @@ from PSICHIC.wrapper import PsichicWrapper
 class Miner:
     def __init__(self):
         self.hugging_face_dataset_repo = 'Metanova/SAVI-2020'
-        self.csv_chunk_size = 128
         self.psichic_result_column_name = 'predicted_binding_affinity'
-        self.savepath = os.path.join(BASE_DIR, 'downloaded_files')
+        self.chunk_size = 128
         
         self.config = self.get_config()
         self.setup_logging()
@@ -37,8 +37,6 @@ class Miner:
         self.lock = threading.Lock()
         self.thread = None
         self.shutdown_event = threading.Event()
-
-        self.downloaded_file = os.path.join(BASE_DIR, self.savepath, 'savi_batch_100.csv')
 
     def get_config(self):
         # Set up the configuration parser
@@ -88,7 +86,7 @@ class Miner:
         bt.logging.info(f"Wallet: {self.wallet}")
 
         # Initialize subtensor.
-        self.subtensor = bt.subtensor(network="test")
+        self.subtensor = bt.subtensor(network="ws://localhost:9944")
         bt.logging.info(f"Subtensor: {self.subtensor}")
 
         # Initialize metagraph.
@@ -111,48 +109,38 @@ class Miner:
         bt.logging.trace(f'Not blacklisting recognized hotkey {synapse.dendrite.hotkey}')
         return False, None
     
-    def download_random_chunk_from_dataset(self):
-        # Downloads a random chunk from the dataset from the Hugging Face repository.
-        try:
-            files = list_repo_files(self.hugging_face_dataset_repo, repo_type="dataset")
-            files = [file for file in files if file.endswith('.csv')]
-            random_file = random.choice(files)
-            bt.logging.info(f"Downloading random file: {random_file}")
-            self.downloaded_file = hf_hub_download(repo_id=self.hugging_face_dataset_repo, 
-                            filename=random_file,
-                            repo_type='dataset',
-                            revision='main', 
-                            local_dir=self.savepath,
-                            )
-            if self.downloaded_file:
-                bt.logging.info(f"Downloaded file: {self.downloaded_file}")
-                return self.downloaded_file
-            else:
-                bt.logging.error(f"Failed to download file: {random_file}")
-                return None
-        except Exception as e:
-            bt.logging.error(f"Error downloading file: {e}")
-            return None
+    def stream_random_chunk_from_dataset(self):
+        # Stream random chunk from the dataset.
+        files = list_repo_files(self.hugging_face_dataset_repo, repo_type='dataset')
+        files = [file for file in files if file.endswith('.csv')]
+        random_file = random.choice(files)
+        dataset_dict = load_dataset(self.hugging_face_dataset_repo, 
+                                    data_files={'train': random_file},
+                                    streaming=True,
+                                    )
+        dataset = dataset_dict['train']
+        batched = dataset.batch(self.chunk_size)
+        return batched
 
     def run_psichic_model_loop(self):
-        # Run the PSICHIC model on the given dataframe.
+        dataset = self.stream_random_chunk_from_dataset()
         while not self.shutdown_event.is_set():
             try:
-                with pd.read_csv(self.downloaded_file, chunksize=self.csv_chunk_size) as reader:
-                    for chunk in reader:
-                        chunk['product_name'] = chunk['product_name'].apply(lambda x: x.replace('"', ''))
-                        chunk['product_smiles'] = chunk['product_smiles'].apply(lambda x: x.replace('"', ''))
-                        # Run the PSICHIC model on the chunk.
-                        bt.logging.debug(f'Running inference...')
-                        chunk_psichic_scores = self.psichic_wrapper.run_validation(chunk['product_smiles'].tolist())
-                        chunk_psichic_scores = chunk_psichic_scores.sort_values(by=self.psichic_result_column_name, ascending=False).reset_index(drop=True)
-                        if chunk_psichic_scores[self.psichic_result_column_name].iloc[0] > self.best_score:
-                            candidate_molecule = chunk_psichic_scores['Ligand'].iloc[0]
-                            with self.lock:
-                                self.best_score = chunk_psichic_scores[self.psichic_result_column_name].iloc[0]
-                                self.candidate_product = chunk.loc[chunk['product_smiles'] == candidate_molecule, 'product_name'].iloc[0]
+                for chunk in dataset:
+                    df = pd.DataFrame.from_dict(chunk)
+                    df['product_name'] = df['product_name'].apply(lambda x: x.replace('"', ''))
+                    df['product_smiles'] = df['product_smiles'].apply(lambda x: x.replace('"', ''))
+                    # Run the PSICHIC model on the chunk.
+                    bt.logging.debug(f'Running inference...')
+                    chunk_psichic_scores = self.psichic_wrapper.run_validation(df['product_smiles'].tolist())
+                    chunk_psichic_scores = chunk_psichic_scores.sort_values(by=self.psichic_result_column_name, ascending=False).reset_index(drop=True)
+                    if chunk_psichic_scores[self.psichic_result_column_name].iloc[0] > self.best_score:
+                        candidate_molecule = chunk_psichic_scores['Ligand'].iloc[0]
+                        with self.lock:
+                            self.best_score = chunk_psichic_scores[self.psichic_result_column_name].iloc[0]
+                            self.candidate_product = df.loc[df['product_smiles'] == candidate_molecule, 'product_name'].iloc[0]
 
-                                bt.logging.info(f"New best score: {self.best_score}, New candidate product: {self.candidate_product}")                
+                            bt.logging.info(f"New best score: {self.best_score}, New candidate product: {self.candidate_product}")
             except Exception as e:
                 bt.logging.error(f"Error running PSICHIC model: {e}")
                 self.shutdown_event.set()      
@@ -173,7 +161,7 @@ class Miner:
                 if self.thread.is_alive():
                     self.shutdown_event.set()
                     bt.logging.info(f"Shutdown event set for old thread.")
-
+    
                     # reset old values for best score, etc
                     self.candidate_product = None
                     self.candidate_product_score = 0
@@ -206,11 +194,12 @@ class Miner:
                     self.last_submitted_product = self.candidate_product
                     #self.best_score = self.candidate_product_score
                     bt.logging.info(f"Submitted product: {self.candidate_product} with score: {self.best_score}")
-                return synapse
             else:
-                return None
+                synapse.product_name = None
         else:
-            return None
+            synapse.product_name = None
+
+        return synapse
         
 
     def setup_axon(self):
@@ -264,3 +253,4 @@ class Miner:
 if __name__ == "__main__":
     miner = Miner()
     miner.run()
+
