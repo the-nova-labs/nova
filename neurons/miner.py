@@ -2,38 +2,51 @@ import os
 import time
 import argparse
 import traceback
-import bittensor as bt
 from typing import Tuple
 import random
 import sys
+import threading
+
+import bittensor as bt
+from huggingface_hub import list_repo_files, hf_hub_download
+import pandas as pd
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
 from protocol import ChallengeSynapse
+from utils import get_sequence_from_protein_code
+from PSICHIC.wrapper import PsichicWrapper
 
 class Miner:
     def __init__(self):
+        self.hugging_face_dataset_repo = 'Metanova/SAVI-2020'
+        self.csv_chunk_size = 128
+        self.psichic_result_column_name = 'predicted_binding_affinity'
+        self.savepath = os.path.join(BASE_DIR, 'downloaded_files')
+        
         self.config = self.get_config()
         self.setup_logging()
         self.setup_bittensor_objects()
+        self.current_challenge_protein = None
+        self.psichic_wrapper = PsichicWrapper()
+        self.candidate_product = None
+        self.candidate_product_score = 0
+        self.best_score = 0
+        self.last_submitted_product = None
+        self.lock = threading.Lock()
+        self.thread = None
+        self.shutdown_event = threading.Event()
 
-        self.possible_products_ids = [
-            "61A77BD3826E0AD0_554BFAE008D564C8_6031_UN",
-            "0D478AE9F05191D4_9B5CA2C45361352F_6031_UN",
-            "F50EDCF3F53CBDF8_6B044A996DB48BAE_6031_UN",
-            "1ACADF44CE73C91D_1AEC4E56E4BD7275_6031_UN",
-            "8414B52945073B32_8BE24EA78A011AE1_6031_UN",
-            "not_exist_test"
-        ]
+        self.downloaded_file = os.path.join(BASE_DIR, self.savepath, 'savi_batch_100.csv')
 
     def get_config(self):
         # Set up the configuration parser
         parser = argparse.ArgumentParser()
-        # TODO: Add your custom miner arguments to the parser.
-        parser.add_argument('--custom', default='my_custom_value', help='Adds a custom value to the parser.')
+        # Adds the path to save downloaded files.
+        #parser.add_argument('--savepath', default=os.path.join(BASE_DIR, 'downloaded_files'), help='Path to save downloaded files')
         # Adds override arguments for network and netuid.
-        parser.add_argument('--netuid', type=int, default=1, help="The chain subnet uid.")
+        parser.add_argument('--netuid', type=int, default=309, help="The chain subnet uid.")
         # Adds subtensor specific arguments.
         bt.subtensor.add_args(parser)
         # Adds logging specific arguments.
@@ -54,8 +67,10 @@ class Miner:
                 'miner',
             )
         )
-        # Ensure the directory for logging exists.
+        # Ensure the directories for logging and downloaded files exist.
         os.makedirs(config.full_path, exist_ok=True)
+        #os.makedirs(config.savepath, exist_ok=True)
+
         return config
 
     def setup_logging(self):
@@ -95,12 +110,108 @@ class Miner:
             return True, None
         bt.logging.trace(f'Not blacklisting recognized hotkey {synapse.dendrite.hotkey}')
         return False, None
+    
+    def download_random_chunk_from_dataset(self):
+        # Downloads a random chunk from the dataset from the Hugging Face repository.
+        try:
+            files = list_repo_files(self.hugging_face_dataset_repo, repo_type="dataset")
+            files = [file for file in files if file.endswith('.csv')]
+            random_file = random.choice(files)
+            bt.logging.info(f"Downloading random file: {random_file}")
+            self.downloaded_file = hf_hub_download(repo_id=self.hugging_face_dataset_repo, 
+                            filename=random_file,
+                            repo_type='dataset',
+                            revision='main', 
+                            local_dir=self.savepath,
+                            )
+            if self.downloaded_file:
+                bt.logging.info(f"Downloaded file: {self.downloaded_file}")
+                return self.downloaded_file
+            else:
+                bt.logging.error(f"Failed to download file: {random_file}")
+                return None
+        except Exception as e:
+            bt.logging.error(f"Error downloading file: {e}")
+            return None
+
+    def run_psichic_model_loop(self):
+        # Run the PSICHIC model on the given dataframe.
+        while not self.shutdown_event.is_set():
+            try:
+                with pd.read_csv(self.downloaded_file, chunksize=self.csv_chunk_size) as reader:
+                    for chunk in reader:
+                        chunk['product_name'] = chunk['product_name'].apply(lambda x: x.replace('"', ''))
+                        chunk['product_smiles'] = chunk['product_smiles'].apply(lambda x: x.replace('"', ''))
+                        # Run the PSICHIC model on the chunk.
+                        bt.logging.debug(f'Running inference...')
+                        chunk_psichic_scores = self.psichic_wrapper.run_validation(chunk['product_smiles'].tolist())
+                        chunk_psichic_scores = chunk_psichic_scores.sort_values(by=self.psichic_result_column_name, ascending=False).reset_index(drop=True)
+                        if chunk_psichic_scores[self.psichic_result_column_name].iloc[0] > self.best_score:
+                            candidate_molecule = chunk_psichic_scores['Ligand'].iloc[0]
+                            with self.lock:
+                                self.best_score = chunk_psichic_scores[self.psichic_result_column_name].iloc[0]
+                                self.candidate_product = chunk.loc[chunk['product_smiles'] == candidate_molecule, 'product_name'].iloc[0]
+
+                                bt.logging.info(f"New best score: {self.best_score}, New candidate product: {self.candidate_product}")                
+            except Exception as e:
+                bt.logging.error(f"Error running PSICHIC model: {e}")
+                self.shutdown_event.set()      
 
     def respond_challenge(self, synapse: ChallengeSynapse) -> ChallengeSynapse:
-        # Simple logic: return the random product_name from the list of possible products.
-        synapse.product_name = random.choice(self.possible_products_ids)
-        bt.logging.info(f"Received input: {synapse.target_protein}, sending output: {synapse.product_name}")
-        return synapse
+
+        bt.logging.info(f"Received input: {synapse.target_protein}")
+
+        # 1. Check if the challenge protein has changed.
+        if self.current_challenge_protein != synapse.target_protein:
+
+            # 1.1. Set the new challenge protein and reset best score etc.
+            self.current_challenge_protein = synapse.target_protein
+            bt.logging.info(f"Target protein changed to: {self.current_challenge_protein}")
+
+            # 1.2. If the thread is running, set the shutdown event.
+            if self.thread:
+                if self.thread.is_alive():
+                    self.shutdown_event.set()
+                    bt.logging.info(f"Shutdown event set for old thread.")
+
+                    # reset old values for best score, etc
+                    self.candidate_product = None
+                    self.candidate_product_score = 0
+                    self.best_score = 0
+                    self.last_submitted_product = None
+                    self.shutdown_event = threading.Event()
+
+
+            # 1.4. Initialize PSICHIC model for the new challenge protein.
+            try:
+                bt.logging.debug(f'Initializing protein sctructure')
+                self.psichic_wrapper.run_challenge_start(self.current_challenge_protein)
+            except Exception as e:
+                bt.logging.error(f"Error initializing PSICHIC model: {e}")
+                return None
+            
+            # 1.5. Start the PSICHIC model loop.
+            try:
+                self.thread = threading.Thread(target=self.run_psichic_model_loop)
+                self.thread.start()
+                bt.logging.debug(f'Thread started successfully')
+            except Exception as e:
+                bt.logging.error(f'Error initializing inference: {e}')
+
+        # 2. Check if the candidate product has changed.
+        if self.candidate_product:
+            if self.candidate_product != self.last_submitted_product:
+                synapse.product_name = self.candidate_product
+                with self.lock:
+                    self.last_submitted_product = self.candidate_product
+                    #self.best_score = self.candidate_product_score
+                    bt.logging.info(f"Submitted product: {self.candidate_product} with score: {self.best_score}")
+                return synapse
+            else:
+                return None
+        else:
+            return None
+        
 
     def setup_axon(self):
         # Build and link miner functions to the axon.

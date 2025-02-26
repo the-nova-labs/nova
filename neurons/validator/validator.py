@@ -5,6 +5,7 @@ import traceback
 import bittensor as bt
 import time
 import sys
+import csv 
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(BASE_DIR)
@@ -225,6 +226,9 @@ class Validator:
 
         #Upload to S3
 
+        self.db.clear_db()
+        bt.logging.info("Local DB cleared after finalizing the challenge.")
+
     def get_final_scoreboard(self):
         """
         Retrieves the best scores and bounty points for each miner from the local DB and
@@ -265,7 +269,8 @@ class Validator:
             self.subtensor.set_weights(
                 netuid=self.config.netuid,
                 uids=list(range(total_miners)),
-                weights=weights
+                weights=weights,
+                wallet=self.wallet
             )
             bt.logging.info("Successfully set weights on chain.")
         except Exception as e:
@@ -321,6 +326,8 @@ class Validator:
                     if not self.finalized_challenge:
                         self.finalize_challenge(challenge_id, protein_code)
                         self.finalized_challenge = True
+                    else:
+                        bt.logging.info(f"Challenge {challenge_id} is already finalized. No action taken.")
 
                 elif status == "finished":
                     bt.logging.info(f"Challenge {challenge_id} is finished. No action taken.")

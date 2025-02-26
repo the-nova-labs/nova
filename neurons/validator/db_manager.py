@@ -33,6 +33,17 @@ class DBManager:
         conn.commit()
         conn.close()
 
+    def clear_db(self):
+        """
+        Removes all rows from the miner_bests table
+        Effectively resets the table for reuse in the next challenge
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM miner_bests")
+        conn.commit()
+        conn.close()
+
     def update_best_score(self, miner_uid: int, miner_hotkey: str, smiles: str, score: float):
         """
         Inserts or updates a single miner's best smiles and score.
@@ -80,6 +91,24 @@ class DBManager:
             return row[0], row[1]
         else:
             return None, 0
+        
+    def get_all_best_scores(self):
+        """
+        Retrieves all miners' best scores from the database.
+        Returns a list of tuples: (miner_uid, miner_hotkey, best_smiles, best_score, bounty_points)
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT miner_uid, miner_hotkey, best_smiles, best_score, bounty_points
+            FROM miner_bests
+        """)
+
+        rows = cursor.fetchall()
+        conn.close()
+    
+        return rows
         
     def award_bounty(self, bounty_value: int):
         """
