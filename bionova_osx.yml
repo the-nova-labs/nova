@@ -12,6 +12,13 @@ dependencies:
   - pyg
   - pip
   - pip:
+    - bittensor
+    - dotenv
+    - psycopg2
+    - torch-scatter
+    - torch-sparse
+    - torch-geometric
+    - substrate-interface
     - rdkit
     - scipy
     - biopython
