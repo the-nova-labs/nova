@@ -126,7 +126,7 @@ async def main(config):
 
             try:
                 # Set the next commitment target protein.
-                protein = get_random_protein
+                protein = get_random_protein()
                 await subtensor.set_commitment(
                     wallet=wallet,
                     netuid=config.netuid,
