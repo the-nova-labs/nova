@@ -1,13 +1,14 @@
-import math
-import random
-import argparse
 import asyncio
+import math 
+import argparse
 from typing import cast
 from types import SimpleNamespace
-
 import bittensor as bt
+from utils import get_smiles, get_random_protein
+from PSICHIC.wrapper import PsichicWrapper
 from bittensor.core.chain_data.utils import decode_metadata
 
+psichic = PsichicWrapper()
 
 def get_config():
     """
@@ -22,16 +23,27 @@ def get_config():
 
 def run_model(protein: str, molecule: str) -> float:
     """
-    A mock scoring function that returns a random score between 0 and 1.
-
-    Args:
-        protein (str): The current protein data.
-        molecule (str): The molecule data to score against the protein.
-
-    Returns:
-        float: A random score.
+    Given a protein sequence (protein) and a molecule identifier (molecule),
+    retrieves its SMILES string, then uses the PsichicWrapper to produce
+    a predicted binding score. Returns 0.0 if SMILES not found or if
+    there's any issue with scoring.
     """
-    return random.random()
+    smiles = get_smiles(molecule)
+    if not smiles:
+        bt.logging.debug(f"Could not retrieve SMILES for '{molecule}', returning score of 0.0.")
+        return 0.0
+
+    results_df = psichic.run_validation([smiles])  # returns a DataFrame
+    if results_df.empty:
+        bt.logging.warning("Psichic returned an empty DataFrame, returning 0.0.")
+        return 0.0
+    
+    predicted_score = results_df.iloc[0]['predicted_binding_affinity']
+    if predicted_score is None:
+        bt.logging.warning("No 'predicted_binding_affinity' found, returning 0.0.")
+        return 0.0
+
+    return float(predicted_score)
 
 
 async def get_commitments(subtensor, netuid: int, block: int = None) -> dict:
@@ -98,11 +110,12 @@ async def main(config):
 
         # Check if the current block marks the end of an epoch (using a 360-block interval).
         if current_block % 360 == 0:
-            # Set the next commitment (here using a test string).
+
+            # Set the next commitment target protein.
             await subtensor.set_commitment(
                 wallet=wallet,
                 netuid=68,
-                data='test_prot'
+                data=get_random_protein()
             )
 
             # Retrieve commitments from the previous epoch.
@@ -120,6 +133,9 @@ async def main(config):
                 if hotkey_stake > best_stake and commit.data is not None:
                     best_stake = hotkey_stake
                     current_protein = commit.data
+
+            # Initialize psichic on the current protein
+            psichic.run_challenge_start(current_protein)
 
             # Retrieve the latest commitments (current epoch).
             current_commitments = await get_commitments(subtensor, netuid=68, block=current_block)
