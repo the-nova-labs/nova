@@ -25,6 +25,7 @@ class Miner:
         self.hugging_face_dataset_repo = 'Metanova/SAVI-2020'
         self.psichic_result_column_name = 'predicted_binding_affinity'
         self.chunk_size = 128
+        self.epoch_length = 100
 
         self.config = self.get_config()
         self.setup_logging()
@@ -138,7 +139,7 @@ class Miner:
                 bt.logging.debug(f'Current block: {current_block}')
 
                 # Check if any commitment has been made on the last epoch (100 blocks here)
-                prev_epoch = current_block - 100
+                prev_epoch = current_block - self.epoch_length
                 previous_metagraph = await self.subtensor.metagraph(self.config.netuid, block=prev_epoch)
                 previous_commitments = await self.get_commitments(block=prev_epoch)
 

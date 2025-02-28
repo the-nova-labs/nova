@@ -7,7 +7,7 @@ from typing import cast
 from types import SimpleNamespace
 import bittensor as bt
 
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
 from utils import get_smiles, get_random_protein
@@ -22,9 +22,15 @@ def get_config():
     and subtensor client.
     """
     parser = argparse.ArgumentParser('Nova')
+    parser.add_argument("--network", default='ws://localhost:9944')
     bt.wallet.add_args(parser)
     bt.subtensor.add_args(parser)
-    return bt.config(parser)
+
+    config = bt.config(parser)
+    config.netuid = 2
+    config.epoch_length = 100
+
+    return config
 
 
 def run_model(protein: str, molecule: str) -> float:
@@ -109,26 +115,26 @@ async def main(config):
 
     while True:
         # Initialize the asynchronous subtensor client.
-        subtensor = bt.async_subtensor(config=config)
+        subtensor = bt.async_subtensor(network=config.network)
         await subtensor.initialize()
         # Fetch the current metagraph for the given subnet (netuid 68).
-        metagraph = await subtensor.metagraph(68)
+        metagraph = await subtensor.metagraph(config.netuid)
         current_block = await subtensor.get_current_block()
 
         # Check if the current block marks the end of an epoch (using a 360-block interval).
-        if current_block % 360 == 0:
+        if current_block % config.epoch_length == 0:
 
             # Set the next commitment target protein.
             await subtensor.set_commitment(
                 wallet=wallet,
-                netuid=68,
+                netuid=config.netuid,
                 data=get_random_protein()
             )
 
             # Retrieve commitments from the previous epoch.
-            prev_epoch = current_block - 360 
-            previous_metagraph = await subtensor.metagraph(68, block=prev_epoch)
-            previous_commitments = await get_commitments(subtensor, netuid=68, block=prev_epoch)
+            prev_epoch = current_block - config.epoch_length 
+            previous_metagraph = await subtensor.metagraph(config.netuid, block=prev_epoch)
+            previous_commitments = await get_commitments(subtensor, netuid=config.netuid, block=prev_epoch)
 
             # Determine the current protein as that set by the validator with the highest stake.
             best_stake = -math.inf
@@ -141,11 +147,18 @@ async def main(config):
                     best_stake = hotkey_stake
                     current_protein = commit.data
 
+            bt.logging.info(f"Current protein: {current_protein}")
+
             # Initialize psichic on the current protein
-            psichic.run_challenge_start(current_protein)
+            try:
+                psichic.run_challenge_start(current_protein)
+                bt.logging.info(f"Model initialized successfully for protein {current_protein}.")
+            except Exception as e:
+                bt.logging.error(f"Error initializing model: {e}")
+                break
 
             # Retrieve the latest commitments (current epoch).
-            current_commitments = await get_commitments(subtensor, netuid=68, block=current_block)
+            current_commitments = await get_commitments(subtensor, netuid=config.netuid, block=current_block)
 
             # Identify the best molecule based on the scoring function.
             best_score = -math.inf
@@ -160,22 +173,30 @@ async def main(config):
 
             # Ensure a best molecule was found before setting weights.
             if best_molecule is not None:
-                # Create weights where the best molecule's UID receives full weight.
-                weights = [0.0] * metagraph.n
-                weights[best_molecule.uid] = 1.0
-                uids = list(range(metagraph.n))
-                await subtensor.set_weights(
-                    wallet=wallet,
-                    uids=uids,
-                    weights=weights,
-                )
+                try:
+                    # Create weights where the best molecule's UID receives full weight.
+                    weights = [0.0] * metagraph.n
+                    weights[best_molecule.uid] = 1.0
+                    uids = list(range(metagraph.n))
+                    await subtensor.set_weights(
+                        wallet=wallet,
+                        uids=uids,
+                        weights=weights,
+                        )
+                    bt.logging.info(f"Weights set successfully: {weights}.")
+                except Exception as e:
+                    bt.logging.error(f"Error setting weights: {e}")
             else:
-                print("No valid molecule commitment found for current epoch.")
+                bt.logging.info("No valid molecule commitment found for current epoch.")
 
-        # Sleep briefly to prevent busy-waiting (adjust sleep time as needed).
-        await asyncio.sleep(1)
+            # Sleep briefly to prevent busy-waiting (adjust sleep time as needed).
+            await asyncio.sleep(1)
+        else:
+            bt.logging.info(f"Waiting for epoch to end... {config.epoch_length - (current_block % config.epoch_length)} blocks remaining.")
+            await asyncio.sleep(12)
 
 
 if __name__ == "__main__":
     config = get_config()
     asyncio.run(main(config))
+
