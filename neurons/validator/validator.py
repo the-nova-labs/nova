@@ -1,9 +1,15 @@
 import asyncio
 import math 
+import os
+import sys
 import argparse
 from typing import cast
 from types import SimpleNamespace
 import bittensor as bt
+
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.append(BASE_DIR)
+
 from utils import get_smiles, get_random_protein
 from PSICHIC.wrapper import PsichicWrapper
 from bittensor.core.chain_data.utils import decode_metadata
@@ -104,6 +110,7 @@ async def main(config):
     while True:
         # Initialize the asynchronous subtensor client.
         subtensor = bt.async_subtensor(config=config)
+        await subtensor.initialize()
         # Fetch the current metagraph for the given subnet (netuid 68).
         metagraph = await subtensor.metagraph(68)
         current_block = await subtensor.get_current_block()
