@@ -17,7 +17,7 @@ import pandas as pd
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
-from utils import get_sequence_from_protein_code
+from my_utils import get_sequence_from_protein_code
 from PSICHIC.wrapper import PsichicWrapper
 
 class Miner:

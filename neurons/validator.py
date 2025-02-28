@@ -10,7 +10,7 @@ import bittensor as bt
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
-from utils import get_smiles, get_random_protein
+from my_utils import get_smiles, get_random_protein
 from PSICHIC.wrapper import PsichicWrapper
 from bittensor.core.chain_data.utils import decode_metadata
 
