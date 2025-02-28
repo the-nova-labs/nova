@@ -24,6 +24,31 @@ def get_smiles(product_name):
 
     return data.get("smiles")
 
+def get_random_protein():
+    api_key = os.environ.get("validator_api_key")
+    if not api_key:
+        raise ValueError("validator_api_key environment variable not set contact nova team for api key.")
+
+    url = "https://rvhs77j663.execute-api.us-east-1.amazonaws.com/prod/random-protein-of-interest"
+    headers = {"x-api-key": api_key}
+
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        raise RuntimeError(f"API call failed: {response.status_code} {response.text}")
+
+    data = response.json()
+
+    if "body" in data:
+        inner_body_str = data["body"]  # e.g. '{"uniprot_code": "A0S183", "protein_sequence": "..."}'
+        try:
+            inner_data = json.loads(inner_body_str) 
+            return inner_data.get("uniprot_code")
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"Could not parse body as JSON: {e}")
+    else:
+        return None  # or raise an error if "body" is missing
+
+
 def get_sequence_from_protein_code(protein_code:str) -> str:
 
     url = f"https://rest.uniprot.org/uniprotkb/{protein_code}.fasta"
@@ -89,6 +114,3 @@ def get_active_challenge():
     except Exception as e:
         bt.logging.warning(f"Error calling active_challenge API: {e}", exc_info=True)
         return None
-
-
-
