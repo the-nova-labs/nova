@@ -25,7 +25,7 @@ class Miner:
         self.hugging_face_dataset_repo = 'Metanova/SAVI-2020'
         self.psichic_result_column_name = 'predicted_binding_affinity'
         self.chunk_size = 128
-        self.epoch_length = 100
+        self.epoch_length = 99
 
         self.config = self.get_config()
         self.setup_logging()
@@ -138,7 +138,7 @@ class Miner:
                 current_block = await self.subtensor.get_current_block()
                 bt.logging.debug(f'Current block: {current_block}')
 
-                # Check if any commitment has been made on the last epoch (100 blocks here)
+                # Check if any commitment has been made on the last epoch
                 prev_epoch = current_block - self.epoch_length
                 previous_metagraph = await self.subtensor.metagraph(self.config.netuid, block=prev_epoch)
                 previous_commitments = await self.get_commitments(block=prev_epoch)
@@ -147,19 +147,20 @@ class Miner:
                 best_stake = -math.inf
                 current_protein = None
                 for index, (hotkey, commit) in enumerate(previous_commitments.items()):
-                    # Access the stake for the given hotkey from the metagraph.
-                    hotkey_stake = previous_metagraph.S[index]
-                    # Choose the commitment with the highest stake and valid data.
-                    if hotkey_stake > best_stake and commit.data is not None:
-                        best_stake = hotkey_stake
-                        current_protein = commit.data
+                    if current_block - commit.block <= self.epoch_length:
+                        # Access the stake for the given hotkey from the metagraph.
+                        hotkey_stake = previous_metagraph.S[index]
+                        # Choose the commitment with the highest stake and valid data.
+                        if hotkey_stake > best_stake and commit.data is not None:
+                            best_stake = hotkey_stake
+                            current_protein = commit.data
 
-                if current_protein is not None:
-                    bt.logging.info(f'Challenge protein: {current_protein}')
-                    return current_protein
-                else:
-                    bt.logging.info(f'No protein set yet. Waiting...')
-                    await asyncio.sleep(12)
+                    if current_protein is not None:
+                        bt.logging.info(f'Challenge protein: {current_protein}')
+                        return current_protein
+                    else:
+                        bt.logging.info(f'No protein set yet. Waiting...')
+                        await asyncio.sleep(12)
 
             except Exception as e:
                 bt.logging.error(f'Error getting challenge protein: {e}')
@@ -215,6 +216,7 @@ class Miner:
                             self.candidate_product = df.loc[df['product_smiles'] == candidate_molecule, 'product_name'].iloc[0]
                             bt.logging.info(f"New best score: {self.best_score}, New candidate product: {self.candidate_product}")
                         await asyncio.sleep(1)
+                    await asyncio.sleep(1)
 
             except Exception as e:
                 bt.logging.error(f"Error running PSICHIC model: {e}")
@@ -224,7 +226,6 @@ class Miner:
         # The Main Mining Loop.
         bt.logging.info("Starting miner loop.")
         await self.setup_bittensor_objects()
-        step = 0
         while True:
             try:
                 self.current_challenge_protein = await self.get_current_challenge_protein()

@@ -28,7 +28,7 @@ def get_config():
 
     config = bt.config(parser)
     config.netuid = 2
-    config.epoch_length = 100
+    config.epoch_length = 99
 
     return config
 
@@ -124,12 +124,17 @@ async def main(config):
         # Check if the current block marks the end of an epoch (using a 360-block interval).
         if current_block % config.epoch_length == 0:
 
-            # Set the next commitment target protein.
-            await subtensor.set_commitment(
-                wallet=wallet,
-                netuid=config.netuid,
-                data=get_random_protein()
-            )
+            try:
+                # Set the next commitment target protein.
+                protein = get_random_protein
+                await subtensor.set_commitment(
+                    wallet=wallet,
+                    netuid=config.netuid,
+                    data=protein
+                )
+                bt.logging.info(f'Commited successfully: {protein}')
+            except Exception as e:
+                bt.logging.error(f'Error: {e}')
 
             # Retrieve commitments from the previous epoch.
             prev_epoch = current_block - config.epoch_length 
@@ -139,15 +144,16 @@ async def main(config):
             # Determine the current protein as that set by the validator with the highest stake.
             best_stake = -math.inf
             current_protein = None
-            for hotkey, commit in previous_commitments.items():
-                # Access the stake for the given hotkey from the metagraph.
-                hotkey_stake = previous_metagraph.S[hotkey]
-                # Choose the commitment with the highest stake and valid data.
-                if hotkey_stake > best_stake and commit.data is not None:
-                    best_stake = hotkey_stake
-                    current_protein = commit.data
+            for index, (hotkey, commit) in enumerate(previous_commitments.items()):
+                if current_block - commit.block <= config.epoch_length:
+                    # Access the stake for the given hotkey from the metagraph.
+                    hotkey_stake = previous_metagraph.S[index]
+                   # Choose the commitment with the highest stake and valid data.
+                    if hotkey_stake > best_stake and commit.data is not None:
+                        best_stake = hotkey_stake
+                        current_protein = commit.data
 
-            bt.logging.info(f"Current protein: {current_protein}")
+                bt.logging.info(f"Current protein: {current_protein}")
 
             # Initialize psichic on the current protein
             try:
@@ -164,12 +170,13 @@ async def main(config):
             best_score = -math.inf
             best_molecule = None
             for hotkey, commit in current_commitments.items():
-                # Assuming that 'commit.data' contains the necessary molecule data; adjust if needed.
-                score = run_model(protein=current_protein, molecule=commit.data.get('molecule', ''))
-                # If the score is higher, or equal but the block is earlier, update the best.
-                if (score > best_score) or (score == best_score and best_molecule is not None and commit.block < best_molecule.block):
-                    best_score = score
-                    best_molecule = commit
+                if current_block - commit.block <= config.epoch_length:
+                    # Assuming that 'commit.data' contains the necessary molecule data; adjust if needed.
+                    score = run_model(protein=current_protein, molecule=commit.data.get('molecule', ''))
+                    # If the score is higher, or equal but the block is earlier, update the best.
+                    if (score > best_score) or (score == best_score and best_molecule is not None and commit.block < best_molecule.block):
+                        best_score = score
+                        best_molecule = commit
 
             # Ensure a best molecule was found before setting weights.
             if best_molecule is not None:
@@ -193,7 +200,7 @@ async def main(config):
             await asyncio.sleep(1)
         else:
             bt.logging.info(f"Waiting for epoch to end... {config.epoch_length - (current_block % config.epoch_length)} blocks remaining.")
-            await asyncio.sleep(12)
+            await asyncio.sleep(3)
 
 
 if __name__ == "__main__":
