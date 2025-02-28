@@ -1,349 +1,174 @@
-import os
-import random
+import asyncio
+import math 
 import argparse
-import traceback
+from typing import cast
+from types import SimpleNamespace
 import bittensor as bt
-import time
-import sys
-import csv 
-
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.append(BASE_DIR)
-
-from protocol import ChallengeSynapse
-from utils import get_smiles, get_active_challenge
-from neurons.validator.db_manager import DBManager
+from utils import get_smiles, get_random_protein
 from PSICHIC.wrapper import PsichicWrapper
-from substrateinterface import SubstrateInterface
+from bittensor.core.chain_data.utils import decode_metadata
+
+psichic = PsichicWrapper()
+
+def get_config():
+    """
+    Parse command-line arguments to set up the configuration for the wallet
+    and subtensor client.
+    """
+    parser = argparse.ArgumentParser('Nova')
+    bt.wallet.add_args(parser)
+    bt.subtensor.add_args(parser)
+    return bt.config(parser)
 
 
-class Validator:
-    def __init__(self):
-        self.config = self.get_config()
-        self.setup_logging()
-        self.setup_bittensor_objects()
-        self.last_update = 0
-        self.my_uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-        self.scores = [1.0] * len(self.metagraph.S)
-        self.last_update = 0
-        self.current_block = 0
-        self.tempo = self.node_query('SubtensorModule', 'Tempo', [self.config.netuid])
-        self.moving_avg_scores = [1.0] * len(self.metagraph.S)
-        self.alpha = 0.1
-        self.node = SubstrateInterface(url=self.config.subtensor.chain_endpoint)
-        self.db = DBManager()
-        self.psichic = PsichicWrapper()
-        self.finalized_challenge = False
+def run_model(protein: str, molecule: str) -> float:
+    """
+    Given a protein sequence (protein) and a molecule identifier (molecule),
+    retrieves its SMILES string, then uses the PsichicWrapper to produce
+    a predicted binding score. Returns 0.0 if SMILES not found or if
+    there's any issue with scoring.
+    """
+    smiles = get_smiles(molecule)
+    if not smiles:
+        bt.logging.debug(f"Could not retrieve SMILES for '{molecule}', returning score of 0.0.")
+        return 0.0
 
-    def get_config(self):
-        # Set up the configuration parser.
-        parser = argparse.ArgumentParser()
-        # TODO: Add your custom validator arguments to the parser.
-        parser.add_argument('--custom', default='my_custom_value', help='Adds a custom value to the parser.')
-        # Adds override arguments for network and netuid.
-        parser.add_argument('--netuid', type=int, default=1, help="The chain subnet uid.")
-        # Adds subtensor specific arguments.
-        bt.subtensor.add_args(parser)
-        # Adds logging specific arguments.
-        bt.logging.add_args(parser)
-        # Adds wallet specific arguments.
-        bt.wallet.add_args(parser)
-        # Parse the config.
-        config = bt.config(parser)
-        # Set up logging directory.
-        config.full_path = os.path.expanduser(
-            "{}/{}/{}/netuid{}/{}".format(
-                config.logging.logging_dir,
-                config.wallet.name,
-                config.wallet.hotkey_str,
-                config.netuid,
-                'validator',
+    results_df = psichic.run_validation([smiles])  # returns a DataFrame
+    if results_df.empty:
+        bt.logging.warning("Psichic returned an empty DataFrame, returning 0.0.")
+        return 0.0
+    
+    predicted_score = results_df.iloc[0]['predicted_binding_affinity']
+    if predicted_score is None:
+        bt.logging.warning("No 'predicted_binding_affinity' found, returning 0.0.")
+        return 0.0
+
+    return float(predicted_score)
+
+
+async def get_commitments(subtensor, netuid: int, block: int = None) -> dict:
+    """
+    Retrieve commitments for all miners on a given subnet (netuid) at a specific block.
+    
+    Args:
+        subtensor: The subtensor client object.
+        netuid (int): The network ID.
+        block (int, optional): The block number to query. Defaults to None.
+    
+    Returns:
+        dict: A mapping from hotkey to a SimpleNamespace containing uid, hotkey,
+              block, and decoded commitment data.
+    """
+    # Use the provided netuid to fetch the corresponding metagraph.
+    metagraph = await subtensor.metagraph(netuid)
+    # Determine the block hash if a block is specified.
+    block_hash = await subtensor.determine_block_hash(block) if block is not None else None
+
+    # Gather commitment queries for all validators (hotkeys) concurrently.
+    commits = await asyncio.gather(*[
+        subtensor.substrate.query(
+            module="Commitments",
+            storage_function="CommitmentOf", 
+            params=[netuid, hotkey],
+            block_hash=block_hash,
+        ) for hotkey in metagraph.hotkeys
+    ])
+
+    # Process the results and build a dictionary with additional metadata.
+    result = {}
+    for uid, hotkey in enumerate(metagraph.hotkeys):
+        commit = cast(dict, commits[uid])
+        if commit:
+            result[hotkey] = SimpleNamespace(
+                uid=uid,
+                hotkey=hotkey,
+                block=commit['block'],
+                data=decode_metadata(commit)
             )
-        )
-        # Ensure the logging directory exists.
-        os.makedirs(config.full_path, exist_ok=True)
-        return config
+    return result
 
-    def setup_logging(self):
-        # Set up logging.
-        bt.logging(config=self.config, logging_dir=self.config.full_path)
-        bt.logging.info(f"Running validator for subnet: {self.config.netuid} on network: {self.config.subtensor.network} with config:")
-        bt.logging.info(self.config)
 
-    def setup_bittensor_objects(self):
-        # Build Bittensor validator objects.
-        bt.logging.info("Setting up Bittensor objects.")
-
-        # Initialize wallet.
-        self.wallet = bt.wallet(config=self.config)
-        bt.logging.info(f"Wallet: {self.wallet}")
-
-        # Initialize subtensor.
-        self.subtensor = bt.subtensor(network="test")
-        bt.logging.info(f"Subtensor: {self.subtensor}")
-
-        # Initialize dendrite.
-        self.dendrite = bt.dendrite(wallet=self.wallet)
-        bt.logging.info(f"Dendrite: {self.dendrite}")
-
-        # Initialize metagraph.
-        self.metagraph = self.subtensor.metagraph(self.config.netuid)
-        bt.logging.info(f"Metagraph: {self.metagraph}")
-
-        # Connect the validator to the network.
-        if self.wallet.hotkey.ss58_address not in self.metagraph.hotkeys:
-            bt.logging.error(f"\nYour validator: {self.wallet} is not registered to chain connection: {self.subtensor} \nRun 'btcli register' and try again.")
-            exit()
-        else:
-            # Each validator gets a unique identity (UID) in the network.
-            self.my_subnet_uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-            bt.logging.info(f"Running validator on uid: {self.my_subnet_uid}")
-
-        # Set up initial scoring weights for validation.
-        bt.logging.info("Building validation weights.")
-        self.scores = [1.0] * len(self.metagraph.S)
-        bt.logging.info(f"Weights: {self.scores}")
-
-    def node_query(self, module, method, params):
-        try:
-            result = self.node.query(module, method, params).value
-
-        except Exception:
-            # reinitilize node
-            self.node = SubstrateInterface(url=self.config.subtensor.chain_endpoint)
-            result = self.node.query(module, method, params).value
-        
-        return result
+async def main(config):
+    """
+    Main routine that continuously checks for the end of an epoch to perform:
+        - Setting a new commitment.
+        - Retrieving past commitments.
+        - Selecting the best protein/molecule pairing based on stakes and scores.
+        - Setting new weights accordingly.
     
-    
-    def query_and_store_challenge_results(self, target_protein):
-        """
-        1) Create a ChallengeSynapse with a given target_protein.
-        2) Query all miners.
-        3) Convert each product_name to SMILES.
-        4) Score them with PsichicWrapper.
-        5) Store in the local DB if it's the miner's best so far.
-        """
+    Args:
+        config: Configuration object for subtensor and wallet.
+    """
+    wallet = bt.wallet(config=config)
 
-        # Build a ChallengeSynapse with a hardcoded protein (for now).
-        synapse = ChallengeSynapse(
-            target_protein = target_protein
-        )
+    while True:
+        # Initialize the asynchronous subtensor client.
+        subtensor = bt.async_subtensor(config=config)
+        # Fetch the current metagraph for the given subnet (netuid 68).
+        metagraph = await subtensor.metagraph(68)
+        current_block = await subtensor.get_current_block()
 
-        # Get validator's hotkey to avoid querying itself
-        my_hotkey = self.wallet.hotkey.ss58_address
-        all_axons = self.metagraph.axons
+        # Check if the current block marks the end of an epoch (using a 360-block interval).
+        if current_block % 360 == 0:
 
-        # Filter out your own axon so that you never query yourself.
-        filtered_axons = [axon for axon in all_axons if axon.hotkey != my_hotkey]
+            # Set the next commitment target protein.
+            await subtensor.set_commitment(
+                wallet=wallet,
+                netuid=68,
+                data=get_random_protein()
+            )
 
-        # Query all miners
-        responses = self.dendrite.query(
-            axons=filtered_axons,
-            synapse=synapse,
-            timeout=12
-        )
+            # Retrieve commitments from the previous epoch.
+            prev_epoch = current_block - 360 
+            previous_metagraph = await subtensor.metagraph(68, block=prev_epoch)
+            previous_commitments = await get_commitments(subtensor, netuid=68, block=prev_epoch)
 
-        if responses is None:
-            bt.logging.warning("No responses returned from the dendrite query.")
-            return
+            # Determine the current protein as that set by the validator with the highest stake.
+            best_stake = -math.inf
+            current_protein = None
+            for hotkey, commit in previous_commitments.items():
+                # Access the stake for the given hotkey from the metagraph.
+                hotkey_stake = previous_metagraph.S[hotkey]
+                # Choose the commitment with the highest stake and valid data.
+                if hotkey_stake > best_stake and commit.data is not None:
+                    best_stake = hotkey_stake
+                    current_protein = commit.data
 
-        # Collect (miner_uid -> product_name)
-        miner_submissions = {}
-        for i, resp in enumerate(responses):
-            if resp is not None and resp.product_name is not None:
-                miner_hotkey = filtered_axons[i].hotkey
-                miner_uid = self.metagraph.hotkeys.index(miner_hotkey)
-                miner_submissions[miner_uid] = resp.product_name
+            # Initialize psichic on the current protein
+            psichic.run_challenge_start(current_protein)
 
+            # Retrieve the latest commitments (current epoch).
+            current_commitments = await get_commitments(subtensor, netuid=68, block=current_block)
 
-        bt.logging.info(f"Collected product_name from {len(miner_submissions)} miners: {miner_submissions}")
+            # Identify the best molecule based on the scoring function.
+            best_score = -math.inf
+            best_molecule = None
+            for hotkey, commit in current_commitments.items():
+                # Assuming that 'commit.data' contains the necessary molecule data; adjust if needed.
+                score = run_model(protein=current_protein, molecule=commit.data.get('molecule', ''))
+                # If the score is higher, or equal but the block is earlier, update the best.
+                if (score > best_score) or (score == best_score and best_molecule is not None and commit.block < best_molecule.block):
+                    best_score = score
+                    best_molecule = commit
 
-        #Convert each product_name -> SMILES
-        uid_to_smiles = {}
-        for uid, pname in miner_submissions.items():
-            smiles = get_smiles(pname)
-            if smiles:
-                uid_to_smiles[uid] = smiles
-            else:
-                bt.logging.warning(f"product_name {pname} (miner uid {uid}) not found or invalid in DB.")
-
-        # If no valid SMILES, nothing to score.
-        if not uid_to_smiles:
-            bt.logging.info("No valid SMILES to score.")
-            return
-
-        #  Score all SMILES via PsichicWrapper
-        smiles_list = list(uid_to_smiles.values())
-        self.psichic.run_challenge_start(synapse.target_protein)
-        results_df = self.psichic.run_validation(smiles_list)
-        # Returns a DataFrame with columns like ['Protein', 'Ligand', 'predicted_binding_affinity']
-        bt.logging.info(f"Scoring results:\n{results_df}")
-
-        # Map each row back to the correct miner (by matching SMILES)
-        for idx, row in results_df.iterrows():
-            ligand_smiles = row['Ligand'] 
-            predicted_score = row['predicted_binding_affinity'] 
-            matched_uid = None
-            for uid, smi in uid_to_smiles.items():
-                if smi == ligand_smiles:
-                    matched_uid = uid
-                    break
-
-            if matched_uid is not None:
-                # Update each miner’s best submission in the DB
-                self.db.update_best_score(
-                    miner_uid = matched_uid,
-                    miner_hotkey = miner_hotkey,
-                    smiles = ligand_smiles,
-                    score = float(predicted_score)
+            # Ensure a best molecule was found before setting weights.
+            if best_molecule is not None:
+                # Create weights where the best molecule's UID receives full weight.
+                weights = [0.0] * metagraph.n
+                weights[best_molecule.uid] = 1.0
+                uids = list(range(metagraph.n))
+                await subtensor.set_weights(
+                    wallet=wallet,
+                    uids=uids,
+                    weights=weights,
                 )
-
-        # Award bounty to the miner with the highest score
-        self.db.award_bounty(1)
-
-        bt.logging.info("Done updating best scores in DB.")
-
-    def finalize_challenge(self, challenge_id: int, protein_code: str):
-        """
-        Finalizes a challenge by:
-         1. Gathering the final scoreboard from the local DB.
-         2. Setting on-chain weights.
-         3. Exporting the scoreboard to a CSV.
-         4. TODO: Upload the CSV to S3.
-        """
-        bt.logging.info(f"Finalizing challenge {challenge_id}...")
-
-        scoreboard = self.get_final_scoreboard()
-        if not scoreboard:
-            bt.logging.info("No entries found in scoreboard; skipping weights and export.")
-            return
-
-        self.set_challenge_weights(scoreboard)
-
-        csv_path = self.export_scoreboard_to_csv(challenge_id, scoreboard)
-        bt.logging.info(f"Exported final scoreboard to {csv_path}")
-
-        #Upload to S3
-
-        self.db.clear_db()
-        bt.logging.info("Local DB cleared after finalizing the challenge.")
-
-    def get_final_scoreboard(self):
-        """
-        Retrieves the best scores and bounty points for each miner from the local DB and
-        returns a dict scoreboard
-        """
-        best_scores_data = self.db.get_all_best_scores()  # Add this method to DBManager
-        scoreboard = {}
-        for row in best_scores_data:
-            uid, hotkey, best_smiles, best_score, bounty_points = row
-            scoreboard[uid] = {
-                'hotkey': hotkey,
-                'best_smiles': best_smiles,
-                'best_score': best_score,
-                'bounty_points': bounty_points
-            }
-        return scoreboard
-
-    def set_challenge_weights(self, scoreboard: dict):
-        """
-        Normalizes each miner's best_score and calls Bittensor to set weights on-chain.
-        """
-        max_score = max(entry['best_score'] for entry in scoreboard.values())
-        if max_score <= 0:
-            bt.logging.info("Max score <= 0; skipping on-chain weight update.")
-            return
-
-        total_miners = len(self.metagraph.hotkeys)
-        weights = []
-        for uid in range(total_miners):
-            entry = scoreboard.get(uid)
-            if entry:
-                normalized = entry['best_score'] / max_score
             else:
-                normalized = 0.0
-            weights.append(normalized)
+                print("No valid molecule commitment found for current epoch.")
 
-        try:
-            self.subtensor.set_weights(
-                netuid=self.config.netuid,
-                uids=list(range(total_miners)),
-                weights=weights,
-                wallet=self.wallet
-            )
-            bt.logging.info("Successfully set weights on chain.")
-        except Exception as e:
-            bt.logging.error(f"Error calling set_weights: {e}")
-
-    def export_scoreboard_to_csv(self, challenge_id: int, scoreboard: dict) -> str:
-        """
-        Writes scoreboard data (including bounty_points) to a CSV file and returns the local file path.
-        """
-        csv_dir = os.path.join(BASE_DIR, "temp_data")
-        os.makedirs(csv_dir, exist_ok=True)
-
-        filename = f"challenge_{challenge_id}_scoreboard.csv"
-        csv_path = os.path.join(csv_dir, filename)
-
-        with open(csv_path, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["miner_uid", "hotkey", "best_score", "best_smiles", "bounty_points"])
-            for uid, data in scoreboard.items():
-                writer.writerow([
-                    uid,
-                    data.get('hotkey', ''),
-                    data.get('best_score', 0),
-                    data.get('best_smiles', ''),
-                    data.get('bounty_points', 0)
-                ])
-
-        return csv_path
+        # Sleep briefly to prevent busy-waiting (adjust sleep time as needed).
+        await asyncio.sleep(1)
 
 
-    def run(self):
-        # The Main Validation Loop.
-        bt.logging.info("Starting validator loop.")
-        while True:
-            try:
-                # Retrieve the challenge (if any) that is not finished
-                challenge = get_active_challenge()
-
-                if challenge is None:
-                    bt.logging.info("No active challenge found. Sleeping...")
-                    time.sleep(10)
-                    continue
-
-                status = challenge["status"]
-                challenge_id = challenge["challenge_id"]
-                protein_code = challenge["target_protein"]
-
-                if status == "in_progress":
-                    self.finalized_challenge = False
-                    self.query_and_store_challenge_results(protein_code)
-
-                elif status == "finalizing":
-                    if not self.finalized_challenge:
-                        self.finalize_challenge(challenge_id, protein_code)
-                        self.finalized_challenge = True
-                    else:
-                        bt.logging.info(f"Challenge {challenge_id} is already finalized. No action taken.")
-
-                elif status == "finished":
-                    bt.logging.info(f"Challenge {challenge_id} is finished. No action taken.")
-                
-                time.sleep(10)
-
-
-            except RuntimeError as e:
-                bt.logging.error(e)
-                traceback.print_exc()
-
-            except KeyboardInterrupt:
-                bt.logging.success("Keyboard interrupt detected. Exiting validator.")
-                exit()
-
-# Run the validator.
 if __name__ == "__main__":
-    validator = Validator()
-    validator.run()
+    config = get_config()
+    asyncio.run(main(config))
