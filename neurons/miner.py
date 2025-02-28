@@ -1,13 +1,15 @@
 import os
-import time
-import argparse
-import traceback
-from typing import Tuple
+import math
 import random
+import argparse
+import asyncio
+from typing import cast
+from types import SimpleNamespace
 import sys
-import threading
 
 import bittensor as bt
+from bittensor.core.chain_data.utils import decode_metadata
+from bittensor.core.errors import MetadataError
 from datasets import load_dataset
 from huggingface_hub import list_repo_files
 import pandas as pd
@@ -15,7 +17,6 @@ import pandas as pd
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
-from protocol import ChallengeSynapse
 from utils import get_sequence_from_protein_code
 from PSICHIC.wrapper import PsichicWrapper
 
@@ -24,38 +25,38 @@ class Miner:
         self.hugging_face_dataset_repo = 'Metanova/SAVI-2020'
         self.psichic_result_column_name = 'predicted_binding_affinity'
         self.chunk_size = 128
-        
+
         self.config = self.get_config()
         self.setup_logging()
-        self.setup_bittensor_objects()
+        self.current_block = 0
         self.current_challenge_protein = None
+        self.last_challenge_protein = None
         self.psichic_wrapper = PsichicWrapper()
         self.candidate_product = None
         self.candidate_product_score = 0
         self.best_score = 0
         self.last_submitted_product = None
-        self.lock = threading.Lock()
-        self.thread = None
-        self.shutdown_event = threading.Event()
+        self.lock = asyncio.Lock()
+        self.shared_lock = asyncio.Lock()
+        self.inference_task = None
+        self.shutdown_event = asyncio.Event()
 
     def get_config(self):
-        # Set up the configuration parser
+        # Set up the configuration parser.
         parser = argparse.ArgumentParser()
-        # Adds the path to save downloaded files.
-        #parser.add_argument('--savepath', default=os.path.join(BASE_DIR, 'downloaded_files'), help='Path to save downloaded files')
+        # Adds override arguments for network.
+        parser.add_argument('--network', default='ws://localhost:9944', help='Network to use')
         # Adds override arguments for network and netuid.
-        parser.add_argument('--netuid', type=int, default=309, help="The chain subnet uid.")
+        parser.add_argument('--netuid', type=int, default=2, help="The chain subnet uid.")
         # Adds subtensor specific arguments.
         bt.subtensor.add_args(parser)
         # Adds logging specific arguments.
         bt.logging.add_args(parser)
         # Adds wallet specific arguments.
         bt.wallet.add_args(parser)
-        # Adds axon specific arguments.
-        bt.axon.add_args(parser)
-        # Parse the arguments.
+        # Parse the config.
         config = bt.config(parser)
-        # Set up logging directory
+        # Set up logging directory.
         config.full_path = os.path.expanduser(
             "{}/{}/{}/netuid{}/{}".format(
                 config.logging.logging_dir,
@@ -65,20 +66,18 @@ class Miner:
                 'miner',
             )
         )
-        # Ensure the directories for logging and downloaded files exist.
+        # Ensure the logging directory exists.
         os.makedirs(config.full_path, exist_ok=True)
-        #os.makedirs(config.savepath, exist_ok=True)
-
         return config
 
     def setup_logging(self):
-        # Activate Bittensor's logging with the set configurations.
+        # Set up logging.
         bt.logging(config=self.config, logging_dir=self.config.full_path)
         bt.logging.info(f"Running miner for subnet: {self.config.netuid} on network: {self.config.subtensor.network} with config:")
         bt.logging.info(self.config)
 
-    def setup_bittensor_objects(self):
-        # Initialize Bittensor miner objects
+    async def setup_bittensor_objects(self):
+        # Build Bittensor validator objects.
         bt.logging.info("Setting up Bittensor objects.")
 
         # Initialize wallet.
@@ -86,35 +85,91 @@ class Miner:
         bt.logging.info(f"Wallet: {self.wallet}")
 
         # Initialize subtensor.
-        self.subtensor = bt.subtensor(network="ws://localhost:9944")
-        bt.logging.info(f"Subtensor: {self.subtensor}")
+        async with bt.async_subtensor(network=self.config.network) as subtensor:
+            self.subtensor = subtensor
+            bt.logging.info(f"Subtensor: {self.subtensor}")
 
-        # Initialize metagraph.
-        self.metagraph = self.subtensor.metagraph(self.config.netuid)
-        bt.logging.info(f"Metagraph: {self.metagraph}")
+            self.metagraph = await self.subtensor.metagraph(self.config.netuid)
+            bt.logging.info(f"Metagraph: {self.metagraph}")
 
-        if self.wallet.hotkey.ss58_address not in self.metagraph.hotkeys:
-            bt.logging.error(f"\nYour miner: {self.wallet} is not registered to chain connection: {self.subtensor} \nRun 'btcli register' and try again.")
-            exit()
-        else:
-            # Each miner gets a unique identity (UID) in the network.
-            self.my_subnet_uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-            bt.logging.info(f"Running miner on uid: {self.my_subnet_uid}")
+    async def get_commitments(self, block: int = None) -> dict:
+        """
+        Retrieve commitments for all miners on a given subnet (netuid) at a specific block.
 
-    def blacklist_fn(self, synapse: ChallengeSynapse) -> Tuple[bool, str]:
-        # Ignore requests from unrecognized entities.
-        if synapse.dendrite.hotkey not in self.metagraph.hotkeys:
-            bt.logging.trace(f'Blacklisting unrecognized hotkey {synapse.dendrite.hotkey}')
-            return True, None
-        bt.logging.trace(f'Not blacklisting recognized hotkey {synapse.dendrite.hotkey}')
-        return False, None
-    
+        Args:
+            block (int, optional): The block number to query. Defaults to None.
+
+        Returns:
+            dict: A mapping from hotkey to a SimpleNamespace containing uid, hotkey,
+                block, and decoded commitment data.
+        """
+        # Use the provided netuid to fetch the corresponding metagraph.
+        metagraph = await self.subtensor.metagraph(self.config.netuid)
+        # Determine the block hash if a block is specified.
+        block_hash = await self.subtensor.determine_block_hash(block) if block is not None else None
+
+        # Gather commitment queries for all validators (hotkeys) concurrently.
+        commits = await asyncio.gather(*[
+            self.subtensor.substrate.query(
+                module="Commitments",
+                storage_function="CommitmentOf",
+                params=[self.config.netuid, hotkey],
+                block_hash=block_hash,
+            ) for hotkey in metagraph.hotkeys
+        ])
+
+        # Process the results and build a dictionary with additional metadata.
+        result = {}
+        for uid, hotkey in enumerate(metagraph.hotkeys):
+            commit = cast(dict, commits[uid])
+            if commit:
+                result[hotkey] = SimpleNamespace(
+                    uid=uid,
+                    hotkey=hotkey,
+                    block=commit['block'],
+                    data=decode_metadata(commit)
+                )
+        return result
+
+    async def get_current_challenge_protein(self):
+        while True:
+            try:
+                current_block = await self.subtensor.get_current_block()
+                bt.logging.debug(f'Current block: {current_block}')
+
+                # Check if any commitment has been made on the last epoch (100 blocks here)
+                prev_epoch = current_block - 100
+                previous_metagraph = await self.subtensor.metagraph(self.config.netuid, block=prev_epoch)
+                previous_commitments = await self.get_commitments(block=prev_epoch)
+
+                # Determine the current protein as that set by the validator with the highest stake.
+                best_stake = -math.inf
+                current_protein = None
+                for index, (hotkey, commit) in enumerate(previous_commitments.items()):
+                    # Access the stake for the given hotkey from the metagraph.
+                    hotkey_stake = previous_metagraph.S[index]
+                    # Choose the commitment with the highest stake and valid data.
+                    if hotkey_stake > best_stake and commit.data is not None:
+                        best_stake = hotkey_stake
+                        current_protein = commit.data
+
+                if current_protein is not None:
+                    bt.logging.info(f'Challenge protein: {current_protein}')
+                    return current_protein
+                else:
+                    bt.logging.info(f'No protein set yet. Waiting...')
+                    await asyncio.sleep(12)
+
+            except Exception as e:
+                bt.logging.error(f'Error getting challenge protein: {e}')
+                break
+
     def stream_random_chunk_from_dataset(self):
-        # Stream random chunk from the dataset.
+        # Streams a random chunk from the dataset repo on huggingface.
         files = list_repo_files(self.hugging_face_dataset_repo, repo_type='dataset')
         files = [file for file in files if file.endswith('.csv')]
         random_file = random.choice(files)
-        dataset_dict = load_dataset(self.hugging_face_dataset_repo, 
+        dataset_dict = load_dataset(self.hugging_face_dataset_repo,
                                     data_files={'train': random_file},
                                     streaming=True,
                                     )
@@ -122,7 +177,7 @@ class Miner:
         batched = dataset.batch(self.chunk_size)
         return batched
 
-    def run_psichic_model_loop(self):
+    async def run_psichic_model_loop(self):
         """
         Continuously runs the PSICHIC model on batches of molecules from the dataset.
 
@@ -153,141 +208,105 @@ class Miner:
                     chunk_psichic_scores = self.psichic_wrapper.run_validation(df['product_smiles'].tolist())
                     chunk_psichic_scores = chunk_psichic_scores.sort_values(by=self.psichic_result_column_name, ascending=False).reset_index(drop=True)
                     if chunk_psichic_scores[self.psichic_result_column_name].iloc[0] > self.best_score:
-                        candidate_molecule = chunk_psichic_scores['Ligand'].iloc[0]
-                        with self.lock:
+                        async with self.shared_lock:
+                            candidate_molecule = chunk_psichic_scores['Ligand'].iloc[0]
                             self.best_score = chunk_psichic_scores[self.psichic_result_column_name].iloc[0]
                             self.candidate_product = df.loc[df['product_smiles'] == candidate_molecule, 'product_name'].iloc[0]
-
                             bt.logging.info(f"New best score: {self.best_score}, New candidate product: {self.candidate_product}")
+                        await asyncio.sleep(1)
+
             except Exception as e:
                 bt.logging.error(f"Error running PSICHIC model: {e}")
-                self.shutdown_event.set()      
+                self.shutdown_event.set()
 
-    def respond_challenge(self, synapse: ChallengeSynapse) -> ChallengeSynapse:
-        """
-        Responds to protein binding challenges by suggesting product molecules.
-
-        This method manages the continuous process of finding optimal binding products for a given target protein.
-        When a new target protein is received, it initializes a new PSICHIC model instance and starts a background
-        thread to continuously search for better binding candidates.
-
-        Args:
-            synapse (ChallengeSynapse): Contains the target protein sequence and other challenge parameters.
-
-        Returns:
-            ChallengeSynapse: Returns the updated synapse object with the best candidate product name if a new
-                             candidate is found, otherwise returns None.
-
-        Note:
-            - The method maintains state between calls to track the current challenge protein and best candidates
-            - Uses threading to continuously search for better binding candidates in the background
-            - Only returns a response when a new, better candidate is found
-        """
-
-        bt.logging.info(f"Received input: {synapse.target_protein}")
-
-        # 1. Check if the challenge protein has changed.
-        if self.current_challenge_protein != synapse.target_protein:
-
-            # 1.1. Set the new challenge protein and reset best score etc.
-            self.current_challenge_protein = synapse.target_protein
-            bt.logging.info(f"Target protein changed to: {self.current_challenge_protein}")
-
-            # 1.2. If the thread is running, set the shutdown event.
-            if self.thread:
-                if self.thread.is_alive():
-                    self.shutdown_event.set()
-                    bt.logging.info(f"Shutdown event set for old thread.")
-    
-                    # reset old values for best score, etc
-                    self.candidate_product = None
-                    self.candidate_product_score = 0
-                    self.best_score = 0
-                    self.last_submitted_product = None
-                    self.shutdown_event = threading.Event()
-
-
-            # 1.4. Initialize PSICHIC model for the new challenge protein.
-            try:
-                bt.logging.debug(f'Initializing protein sctructure')
-                self.psichic_wrapper.run_challenge_start(self.current_challenge_protein)
-            except Exception as e:
-                bt.logging.error(f"Error initializing PSICHIC model: {e}")
-                return None
-            
-            # 1.5. Start the PSICHIC model loop.
-            try:
-                self.thread = threading.Thread(target=self.run_psichic_model_loop)
-                self.thread.start()
-                bt.logging.debug(f'Thread started successfully')
-            except Exception as e:
-                bt.logging.error(f'Error initializing inference: {e}')
-
-        # 2. Check if the candidate product has changed.
-        if self.candidate_product:
-            if self.candidate_product != self.last_submitted_product:
-                synapse.product_name = self.candidate_product
-                with self.lock:
-                    self.last_submitted_product = self.candidate_product
-                    #self.best_score = self.candidate_product_score
-                    bt.logging.info(f"Submitted product: {self.candidate_product} with score: {self.best_score}")
-            else:
-                synapse.product_name = None
-        else:
-            synapse.product_name = None
-
-        return synapse
-        
-
-    def setup_axon(self):
-        # Build and link miner functions to the axon.
-        self.axon = bt.axon(wallet=self.wallet, port=self.config.axon.port)
-
-        # Attach functions to the axon.
-        bt.logging.info(f"Attaching forward function to axon.")
-        self.axon.attach(
-            forward_fn=self.respond_challenge,
-            blacklist_fn=self.blacklist_fn,
-        )
-
-        # Serve the axon.
-        bt.logging.info(f"Serving axon on network: {self.config.subtensor.network} with netuid: {self.config.netuid}")
-        self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor)
-        bt.logging.info(f"Axon: {self.axon}")
-
-        # Start the axon server.
-        bt.logging.info(f"Starting axon server on port: {self.config.axon.port}")
-        self.axon.start()
-
-    def run(self):
-        self.setup_axon()
-
-        # Keep the miner alive.
-        bt.logging.info(f"Starting main loop")
+    async def run(self):
+        # The Main Mining Loop.
+        bt.logging.info("Starting miner loop.")
+        await self.setup_bittensor_objects()
         step = 0
         while True:
             try:
+                self.current_challenge_protein = await self.get_current_challenge_protein()
+
+                # Check if protein has changed
+                if self.current_challenge_protein != self.last_challenge_protein:
+                    bt.logging.info(f'Got new challenge protein: {self.current_challenge_protein}')
+                    self.last_challenge_protein = self.current_challenge_protein
+
+                    # If old task still running, set shutdown event
+                    if self.inference_task:
+                        if not self.inference_task.done():
+                            self.shutdown_event.set()
+                            bt.logging.debug(f"Shutdown event set for old inference task.")
+
+                            # reset old values for best score, etc
+                            self.candidate_product = None
+                            self.candidate_product_score = 0
+                            self.best_score = 0
+                            self.last_submitted_product = None
+                            self.shutdown_event = asyncio.Event()
+
+                    # Get protein sequence from uniprot
+                    protein_sequence = get_sequence_from_protein_code(self.current_challenge_protein)
+
+                    # Initialize PSICHIC for new protein
+                    bt.logging.info(f'Initializing model for protein sequence: {protein_sequence}')
+                    try:
+                        self.psichic_wrapper.run_challenge_start(protein_sequence)
+                        bt.logging.info('Model initialized successfully.')
+                    except Exception as e:
+                        bt.logging.error(f'Error initializing model: {e}')
+
+                    # Start inference loop
+                    try:
+                        self.inference_task = asyncio.create_task(self.run_psichic_model_loop())
+                        bt.logging.debug(f'Inference task started successfully')
+                    except Exception as e:
+                        bt.logging.error(f'Error initializing inference: {e}')
+
+
+                # Check if candidate product has changed
+                async with self.shared_lock:
+                    if self.candidate_product:
+                        if self.candidate_product != self.last_submitted_product:
+                            current_product_to_submit = self.candidate_product
+                            current_product_score = self.best_score
+                            try:
+                                await self.subtensor.set_commitment(
+                                    wallet=self.wallet,
+                                    netuid=self.config.netuid,
+                                    data=current_product_to_submit
+                                    )
+                                self.last_submitted_product = current_product_to_submit
+                                bt.logging.info(f'Submitted product: {current_product_to_submit} with score: {current_product_score}')
+
+                            except MetadataError as e:
+                                bt.logging.info(f'Too soon to commit again, will keep looking for better candidates.')
+                            except Exception as e:
+                                bt.logging.error(e)
+                await asyncio.sleep(1)
+
                 # Periodically update our knowledge of the network graph.
-                if step % 60 == 0:
-                    self.metagraph.sync()
-                    log = (
-                        f'Block: {self.metagraph.block.item()} | '
-                        f'Incentive: {self.metagraph.I[self.my_subnet_uid]} | '
-                    )
-                    bt.logging.info(log)
-                step += 1
-                time.sleep(1)
+                #if step % 60 == 0:
+                #    await self.metagraph.sync()
+                #    log = (
+                #        f'Block: {self.metagraph.block.item()} | '
+                #        f'Incentive: {self.metagraph.I[self.my_subnet_uid]} | '
+                #    )
+                #    bt.logging.info(log)
+                #step += 1
+                #asyncio.sleep(1)
+
+
+            except RuntimeError as e:
+                bt.logging.error(e)
+                traceback.print_exc()
 
             except KeyboardInterrupt:
-                self.axon.stop()
-                bt.logging.success('Miner killed by keyboard interrupt.')
-                break
-            except Exception as e:
-                bt.logging.error(traceback.format_exc())
-                continue
+                bt.logging.success("Keyboard interrupt detected. Exiting validator.")
+                exit()
 
-# Run the miner.
+# Run the validator.
 if __name__ == "__main__":
     miner = Miner()
-    miner.run()
-
+    asyncio.run(miner.run())
