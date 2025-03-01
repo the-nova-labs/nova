@@ -18,7 +18,11 @@ NOVA harnesses global compute and collective intelligence to navigate huge unexp
 
     python3 neurons/miner.py --wallet.name <your_wallet> --wallet.hotkey <your_hotkey> --logging.debug
 
-### For validators:
+### For validators: 
 
-    DM NOVA team for API key, set validator_api_key=<your_api_key> in .env
+1. DM the NOVA team to obtain an API key.
+2. Set validator_api_key=<your_api_key> in your .env file (create it if it doesn’t exist).
+
+Once that is done run:
+```
     python3 neurons/validator.py --wallet.name <your_wallet> --wallet.hotkey <your_hotkey> --logging.debug
