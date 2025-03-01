@@ -18,6 +18,12 @@ import torch
 from torch_geometric.loader import DataLoader
 from torch_geometric.utils import degree
 
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(BASE_DIR)
+
+from runtime_config import RuntimeConfig
+device = RuntimeConfig.DEVICE
+
 class InfiniteDataLoader(DataLoader):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -336,7 +342,7 @@ def store_result(df, attention_dict, interaction_keys,  ligand_dict,
                         )
     return df
 
-def virtual_screening(screen_df, model, data_loader, result_path, save_interpret=True, ligand_dict=None, device='cpu',
+def virtual_screening(screen_df, model, data_loader, result_path, save_interpret=True, ligand_dict=None, device=device,
                         save_cluster=False):
     if "ID" in screen_df.columns:
         # Iterate through the DataFrame check any empty pairs 
