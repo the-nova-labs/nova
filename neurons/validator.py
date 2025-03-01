@@ -22,13 +22,13 @@ def get_config():
     and subtensor client.
     """
     parser = argparse.ArgumentParser('Nova')
-    parser.add_argument("--network", default='ws://localhost:9944')
+    parser.add_argument("--network", default='finney')
     bt.wallet.add_args(parser)
     bt.subtensor.add_args(parser)
 
     config = bt.config(parser)
-    config.netuid = 2
-    config.epoch_length = 100
+    config.netuid = 68
+    config.epoch_length = 360
 
     return config
 
