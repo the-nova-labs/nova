@@ -25,7 +25,7 @@ class Miner:
         self.hugging_face_dataset_repo = 'Metanova/SAVI-2020'
         self.psichic_result_column_name = 'predicted_binding_affinity'
         self.chunk_size = 128
-        self.epoch_length = 100
+        self.epoch_length = 360
 
         self.config = self.get_config()
         self.setup_logging()
@@ -37,7 +37,6 @@ class Miner:
         self.candidate_product_score = 0
         self.best_score = 0
         self.last_submitted_product = None
-        self.lock = asyncio.Lock()
         self.shared_lock = asyncio.Lock()
         self.inference_task = None
         self.shutdown_event = asyncio.Event()
@@ -46,9 +45,9 @@ class Miner:
         # Set up the configuration parser.
         parser = argparse.ArgumentParser()
         # Adds override arguments for network.
-        parser.add_argument('--network', default='ws://localhost:9944', help='Network to use')
+        parser.add_argument('--network', default='finney', help='Network to use')
         # Adds override arguments for network and netuid.
-        parser.add_argument('--netuid', type=int, default=2, help="The chain subnet uid.")
+        parser.add_argument('--netuid', type=int, default=68, help="The chain subnet uid.")
         # Adds subtensor specific arguments.
         bt.subtensor.add_args(parser)
         # Adds logging specific arguments.
