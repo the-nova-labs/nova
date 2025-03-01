@@ -26,3 +26,8 @@ NOVA harnesses global compute and collective intelligence to navigate huge unexp
 Once that is done run:
 ```
     python3 neurons/validator.py --wallet.name <your_wallet> --wallet.hotkey <your_hotkey> --logging.debug
+```
+
+
+## Troubleshooting
+If you get the error `Error running PSICHIC model: 'PsichicWrapper' object has no attribute 'protein_dict'`, download the trained weights from [our Hugging Face repo](https://huggingface.co/Metanova/PSICHIC/tree/main) and place it in `PSICHIC/trained_weights/PDBv2020_PSICHIC`
