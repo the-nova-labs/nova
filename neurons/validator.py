@@ -172,7 +172,7 @@ async def main(config):
             for hotkey, commit in current_commitments.items():
                 if current_block - commit.block <= config.epoch_length:
                     # Assuming that 'commit.data' contains the necessary molecule data; adjust if needed.
-                    score = run_model(protein=current_protein, molecule=commit.data.get('molecule', ''))
+                    score = run_model(protein=current_protein, molecule=commit.data)
                     # If the score is higher, or equal but the block is earlier, update the best.
                     if (score > best_score) or (score == best_score and best_molecule is not None and commit.block < best_molecule.block):
                         best_score = score
