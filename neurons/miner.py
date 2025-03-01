@@ -142,6 +142,7 @@ class Miner:
                 prev_epoch = current_block - self.epoch_length
                 previous_metagraph = await self.subtensor.metagraph(self.config.netuid, block=current_block)
                 previous_commitments = await self.get_commitments(block=current_block)
+                #print(previous_commitments)
 
                 # Determine the current protein as that set by the validator with the highest stake.
                 best_stake = -math.inf
