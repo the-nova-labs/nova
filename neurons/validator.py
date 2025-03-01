@@ -10,7 +10,7 @@ import bittensor as bt
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
-from my_utils import get_smiles, get_random_protein
+from my_utils import get_smiles, get_random_protein, get_sequence_from_protein_code
 from PSICHIC.wrapper import PsichicWrapper
 from bittensor.core.chain_data.utils import decode_metadata
 
@@ -112,7 +112,7 @@ async def main(config):
         config: Configuration object for subtensor and wallet.
     """
     wallet = bt.wallet(config=config)
-    tolerance = 5 # block tolerance window for validators to commit protein
+    tolerance = 3 # block tolerance window for validators to commit protein
 
     while True:
         # Initialize the asynchronous subtensor client.
@@ -156,8 +156,9 @@ async def main(config):
             bt.logging.info(f"Current protein: {current_protein}")
 
             # Initialize psichic on the current protein
+            protein_sequence = get_sequence_from_protein_code(current_protein)
             try:
-                psichic.run_challenge_start(current_protein)
+                psichic.run_challenge_start(protein_sequence)
                 bt.logging.info(f"Model initialized successfully for protein {current_protein}.")
             except Exception as e:
                 bt.logging.error(f"Error initializing model: {e}")
