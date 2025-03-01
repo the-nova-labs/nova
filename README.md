@@ -10,7 +10,7 @@ NOVA harnesses global compute and collective intelligence to navigate huge unexp
     python3.12 -m venv <your_env>
     source <your_env>/bin/activate
     pip install -r requirements1.txt
-    pip install requirements2.txt
+    pip install -r requirements2.txt
 
 
 ## Running
