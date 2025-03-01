@@ -28,6 +28,11 @@ Once that is done run:
     python3 neurons/validator.py --wallet.name <your_wallet> --wallet.hotkey <your_hotkey> --logging.debug
 ```
 
+## Configuration for CPU
+If you're running on a CPU-only system (no GPU), you will need to modify the PSICHIC/runtime_config.py file:
+```
+DEVICE = 'cpu'
+```
 
 ## Troubleshooting
 If you get the error `Error running PSICHIC model: 'PsichicWrapper' object has no attribute 'protein_dict'`, download the trained weights from [our Hugging Face repo](https://huggingface.co/Metanova/PSICHIC/tree/main) and place it in `PSICHIC/trained_weights/PDBv2020_PSICHIC`
