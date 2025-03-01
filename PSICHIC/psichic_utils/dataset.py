@@ -8,10 +8,17 @@ import pickle
 import torch.utils.data
 from copy import deepcopy
 import numpy as np
+import sys
+
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(BASE_DIR)
+
+from runtime_config import RuntimeConfig
+device = RuntimeConfig.DEVICE
 
 
 class ProteinMoleculeDataset(Dataset):
-    def __init__(self, sequence_data, mol_obj, prot_obj, device='cpu', cache_transform=True):
+    def __init__(self, sequence_data, mol_obj, prot_obj, device=device, cache_transform=True):
         super(ProteinMoleculeDataset, self).__init__()
 
         if isinstance(sequence_data,pd.core.frame.DataFrame):
