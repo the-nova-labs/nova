@@ -28,7 +28,7 @@ def get_config():
 
     config = bt.config(parser)
     config.netuid = 309
-    config.epoch_length = 99
+    config.epoch_length = 100
 
     return config
 
