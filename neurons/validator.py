@@ -27,7 +27,7 @@ def get_config():
     bt.subtensor.add_args(parser)
 
     config = bt.config(parser)
-    config.netuid = 309
+    config.netuid = 2
     config.epoch_length = 100
 
     return config
@@ -120,6 +120,7 @@ async def main(config):
         await subtensor.initialize()
         # Fetch the current metagraph for the given subnet (netuid 68).
         metagraph = await subtensor.metagraph(config.netuid)
+        bt.logging.debug(f'Found {metagraph.n} nodes in network')
         current_block = await subtensor.get_current_block()
 
         # Check if the current block marks the end of an epoch (using a 360-block interval).
@@ -182,13 +183,16 @@ async def main(config):
             if best_molecule is not None:
                 try:
                     # Create weights where the best molecule's UID receives full weight.
-                    weights = [0.0] * metagraph.n
+                    weights = [0.0 for i in range(metagraph.n)]
+                    print(weights)
                     weights[best_molecule.uid] = 1.0
+                    print(weights)
                     uids = list(range(metagraph.n))
                     await subtensor.set_weights(
                         wallet=wallet,
                         uids=uids,
                         weights=weights,
+                        netuid=config.netuid
                         )
                     bt.logging.info(f"Weights set successfully: {weights}.")
                 except Exception as e:
