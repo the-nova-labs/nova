@@ -25,7 +25,7 @@ class Miner:
         self.hugging_face_dataset_repo = 'Metanova/SAVI-2020'
         self.psichic_result_column_name = 'predicted_binding_affinity'
         self.chunk_size = 128
-        self.epoch_length = 99
+        self.epoch_length = 100
 
         self.config = self.get_config()
         self.setup_logging()
@@ -142,6 +142,7 @@ class Miner:
                 prev_epoch = current_block - self.epoch_length
                 previous_metagraph = await self.subtensor.metagraph(self.config.netuid, block=current_block)
                 previous_commitments = await self.get_commitments(block=current_block)
+                #print(previous_commitments)
 
                 # Determine the current protein as that set by the validator with the highest stake.
                 best_stake = -math.inf

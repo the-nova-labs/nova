@@ -10,7 +10,7 @@ import bittensor as bt
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
-from my_utils import get_smiles, get_random_protein
+from my_utils import get_smiles, get_random_protein, get_sequence_from_protein_code
 from PSICHIC.wrapper import PsichicWrapper
 from bittensor.core.chain_data.utils import decode_metadata
 
@@ -27,8 +27,8 @@ def get_config():
     bt.subtensor.add_args(parser)
 
     config = bt.config(parser)
-    config.netuid = 2
-    config.epoch_length = 99
+    config.netuid = 309
+    config.epoch_length = 100
 
     return config
 
@@ -112,6 +112,7 @@ async def main(config):
         config: Configuration object for subtensor and wallet.
     """
     wallet = bt.wallet(config=config)
+    tolerance = 3 # block tolerance window for validators to commit protein
 
     while True:
         # Initialize the asynchronous subtensor client.
@@ -137,31 +138,30 @@ async def main(config):
                 bt.logging.error(f'Error: {e}')
 
             # Retrieve commitments from the previous epoch.
-            prev_epoch = current_block - config.epoch_length 
-            previous_metagraph = await subtensor.metagraph(config.netuid, block=prev_epoch)
-            previous_commitments = await get_commitments(subtensor, netuid=config.netuid, block=prev_epoch)
-
-            # Determine the current protein as that set by the validator with the highest stake.
+            prev_epoch = current_block - config.epoch_length
             best_stake = -math.inf
             current_protein = None
-            for index, (hotkey, commit) in enumerate(previous_commitments.items()):
-                if current_block - commit.block <= config.epoch_length:
-                    # Access the stake for the given hotkey from the metagraph.
-                    hotkey_stake = previous_metagraph.S[index]
-                   # Choose the commitment with the highest stake and valid data.
-                    if hotkey_stake > best_stake and commit.data is not None:
-                        best_stake = hotkey_stake
-                        current_protein = commit.data
 
-                bt.logging.info(f"Current protein: {current_protein}")
+            for offset in range(tolerance):
+                block_to_check = prev_epoch + offset
+                epoch_metagraph = await subtensor.metagraph(config.netuid, block=block_to_check)
+                epoch_commitments = await get_commitments(subtensor, netuid=config.netuid, block=block_to_check)
+                for index, (hotkey, commit) in enumerate(epoch_commitments.items()):
+                    if current_block - commit.block <= (config.epoch_length + tolerance):
+                        hotkey_stake = epoch_metagraph.S[index]
+                        if hotkey_stake > best_stake and commit.data is not None:
+                            best_stake = hotkey_stake
+                            current_protein = commit.data
+
+            bt.logging.info(f"Current protein: {current_protein}")
 
             # Initialize psichic on the current protein
+            protein_sequence = get_sequence_from_protein_code(current_protein)
             try:
-                psichic.run_challenge_start(current_protein)
+                psichic.run_challenge_start(protein_sequence)
                 bt.logging.info(f"Model initialized successfully for protein {current_protein}.")
             except Exception as e:
                 bt.logging.error(f"Error initializing model: {e}")
-                break
 
             # Retrieve the latest commitments (current epoch).
             current_commitments = await get_commitments(subtensor, netuid=config.netuid, block=current_block)
@@ -172,7 +172,7 @@ async def main(config):
             for hotkey, commit in current_commitments.items():
                 if current_block - commit.block <= config.epoch_length:
                     # Assuming that 'commit.data' contains the necessary molecule data; adjust if needed.
-                    score = run_model(protein=current_protein, molecule=commit.data.get('molecule', ''))
+                    score = run_model(protein=current_protein, molecule=commit.data)
                     # If the score is higher, or equal but the block is earlier, update the best.
                     if (score > best_score) or (score == best_score and best_molecule is not None and commit.block < best_molecule.block):
                         best_score = score
