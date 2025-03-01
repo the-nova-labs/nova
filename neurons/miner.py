@@ -140,8 +140,8 @@ class Miner:
 
                 # Check if any commitment has been made on the last epoch
                 prev_epoch = current_block - self.epoch_length
-                previous_metagraph = await self.subtensor.metagraph(self.config.netuid, block=prev_epoch)
-                previous_commitments = await self.get_commitments(block=prev_epoch)
+                previous_metagraph = await self.subtensor.metagraph(self.config.netuid, block=current_block)
+                previous_commitments = await self.get_commitments(block=current_block)
 
                 # Determine the current protein as that set by the validator with the highest stake.
                 best_stake = -math.inf
