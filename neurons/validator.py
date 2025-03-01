@@ -27,7 +27,7 @@ def get_config():
     bt.subtensor.add_args(parser)
 
     config = bt.config(parser)
-    config.netuid = 2
+    config.netuid = 309
     config.epoch_length = 99
 
     return config
@@ -112,6 +112,7 @@ async def main(config):
         config: Configuration object for subtensor and wallet.
     """
     wallet = bt.wallet(config=config)
+    tolerance = 5 # block tolerance window for validators to commit protein
 
     while True:
         # Initialize the asynchronous subtensor client.
@@ -137,23 +138,22 @@ async def main(config):
                 bt.logging.error(f'Error: {e}')
 
             # Retrieve commitments from the previous epoch.
-            prev_epoch = current_block - config.epoch_length 
-            previous_metagraph = await subtensor.metagraph(config.netuid, block=prev_epoch)
-            previous_commitments = await get_commitments(subtensor, netuid=config.netuid, block=prev_epoch)
-
-            # Determine the current protein as that set by the validator with the highest stake.
+            prev_epoch = current_block - config.epoch_length
             best_stake = -math.inf
             current_protein = None
-            for index, (hotkey, commit) in enumerate(previous_commitments.items()):
-                if current_block - commit.block <= config.epoch_length:
-                    # Access the stake for the given hotkey from the metagraph.
-                    hotkey_stake = previous_metagraph.S[index]
-                   # Choose the commitment with the highest stake and valid data.
-                    if hotkey_stake > best_stake and commit.data is not None:
-                        best_stake = hotkey_stake
-                        current_protein = commit.data
 
-                bt.logging.info(f"Current protein: {current_protein}")
+            for offset in range(tolerance):
+                block_to_check = prev_epoch + offset
+                epoch_metagraph = await subtensor.metagraph(config.netuid, block=block_to_check)
+                epoch_commitments = await get_commitments(subtensor, netuid=config.netuid, block=block_to_check)
+                for index, (hotkey, commit) in enumerate(epoch_commitments.items()):
+                    if current_block - commit.block <= (config.epoch_length + tolerance):
+                        hotkey_stake = epoch_metagraph.S[index]
+                        if hotkey_stake > best_stake and commit.data is not None:
+                            best_stake = hotkey_stake
+                            current_protein = commit.data
+
+            bt.logging.info(f"Current protein: {current_protein}")
 
             # Initialize psichic on the current protein
             try:
@@ -161,7 +161,6 @@ async def main(config):
                 bt.logging.info(f"Model initialized successfully for protein {current_protein}.")
             except Exception as e:
                 bt.logging.error(f"Error initializing model: {e}")
-                break
 
             # Retrieve the latest commitments (current epoch).
             current_commitments = await get_commitments(subtensor, netuid=config.netuid, block=current_block)
