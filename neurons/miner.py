@@ -217,7 +217,7 @@ class Miner:
                             self.candidate_product = df.loc[df['product_smiles'] == candidate_molecule, 'product_name'].iloc[0]
                             bt.logging.info(f"New best score: {self.best_score}, New candidate product: {self.candidate_product}")
                         await asyncio.sleep(1)
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(3)
 
             except Exception as e:
                 bt.logging.error(f"Error running PSICHIC model: {e}")
