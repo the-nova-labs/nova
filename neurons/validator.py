@@ -1,11 +1,12 @@
 import asyncio
-import math 
+import math
 import os
 import sys
 import argparse
 from typing import cast
 from types import SimpleNamespace
 import bittensor as bt
+from substrateinterface import SubstrateInterface
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
@@ -22,13 +23,14 @@ def get_config():
     and subtensor client.
     """
     parser = argparse.ArgumentParser('Nova')
-    parser.add_argument("--network", default='finney')
+    parser.add_argument("--network", default='ws://localhost:9944')
     bt.wallet.add_args(parser)
     bt.subtensor.add_args(parser)
 
     config = bt.config(parser)
     config.netuid = 68
-    config.epoch_length = 360
+    node = SubstrateInterface(url=config.network)
+    config.epoch_length = node.query("SubtensorModule", "Tempo", [config.netuid]).value
 
     return config
 
@@ -49,7 +51,7 @@ def run_model(protein: str, molecule: str) -> float:
     if results_df.empty:
         bt.logging.warning("Psichic returned an empty DataFrame, returning 0.0.")
         return 0.0
-    
+
     predicted_score = results_df.iloc[0]['predicted_binding_affinity']
     if predicted_score is None:
         bt.logging.warning("No 'predicted_binding_affinity' found, returning 0.0.")
@@ -58,29 +60,29 @@ def run_model(protein: str, molecule: str) -> float:
     return float(predicted_score)
 
 
-async def get_commitments(subtensor, netuid: int, block: int = None) -> dict:
+async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int) -> dict:
     """
     Retrieve commitments for all miners on a given subnet (netuid) at a specific block.
-    
+
     Args:
         subtensor: The subtensor client object.
         netuid (int): The network ID.
         block (int, optional): The block number to query. Defaults to None.
-    
+
     Returns:
         dict: A mapping from hotkey to a SimpleNamespace containing uid, hotkey,
               block, and decoded commitment data.
     """
     # Use the provided netuid to fetch the corresponding metagraph.
-    metagraph = await subtensor.metagraph(netuid)
+    #metagraph = await subtensor.metagraph(netuid)
     # Determine the block hash if a block is specified.
-    block_hash = await subtensor.determine_block_hash(block) if block is not None else None
+    #block_hash = await subtensor.determine_block_hash(block) if block is not None else None
 
     # Gather commitment queries for all validators (hotkeys) concurrently.
     commits = await asyncio.gather(*[
         subtensor.substrate.query(
             module="Commitments",
-            storage_function="CommitmentOf", 
+            storage_function="CommitmentOf",
             params=[netuid, hotkey],
             block_hash=block_hash,
         ) for hotkey in metagraph.hotkeys
@@ -107,17 +109,18 @@ async def main(config):
         - Retrieving past commitments.
         - Selecting the best protein/molecule pairing based on stakes and scores.
         - Setting new weights accordingly.
-    
+
     Args:
         config: Configuration object for subtensor and wallet.
     """
     wallet = bt.wallet(config=config)
     tolerance = 3 # block tolerance window for validators to commit protein
 
+    # Initialize the asynchronous subtensor client.
+    subtensor = bt.async_subtensor(network=config.network)
+    await subtensor.initialize()
+
     while True:
-        # Initialize the asynchronous subtensor client.
-        subtensor = bt.async_subtensor(network=config.network)
-        await subtensor.initialize()
         # Fetch the current metagraph for the given subnet (netuid 68).
         metagraph = await subtensor.metagraph(config.netuid)
         bt.logging.debug(f'Found {metagraph.n} nodes in network')
@@ -145,8 +148,9 @@ async def main(config):
 
             for offset in range(tolerance):
                 block_to_check = prev_epoch + offset
+                block_hash_to_check = await subtensor.determine_block_hash(block_to_check)
                 epoch_metagraph = await subtensor.metagraph(config.netuid, block=block_to_check)
-                epoch_commitments = await get_commitments(subtensor, netuid=config.netuid, block=block_to_check)
+                epoch_commitments = await get_commitments(subtensor, epoch_metagraph, block_hash_to_check, netuid=config.netuid)
                 for index, (hotkey, commit) in enumerate(epoch_commitments.items()):
                     if current_block - commit.block <= (config.epoch_length + tolerance):
                         hotkey_stake = epoch_metagraph.S[index]
@@ -165,7 +169,8 @@ async def main(config):
                 bt.logging.error(f"Error initializing model: {e}")
 
             # Retrieve the latest commitments (current epoch).
-            current_commitments = await get_commitments(subtensor, netuid=config.netuid, block=current_block)
+            current_block_hash = await subtensor.determine_block_hash(current_block)
+            current_commitments = await get_commitments(subtensor, metagraph, current_block_hash, netuid=config.netuid)
 
             # Identify the best molecule based on the scoring function.
             best_score = -math.inf
@@ -184,17 +189,21 @@ async def main(config):
                 try:
                     # Create weights where the best molecule's UID receives full weight.
                     weights = [0.0 for i in range(metagraph.n)]
-                    print(weights)
+                    print(current_block)
                     weights[best_molecule.uid] = 1.0
                     print(weights)
                     uids = list(range(metagraph.n))
-                    await subtensor.set_weights(
+                    result, message = await subtensor.set_weights(
                         wallet=wallet,
                         uids=uids,
                         weights=weights,
-                        netuid=config.netuid
+                        netuid=config.netuid,
+                        wait_for_inclusion=True,
                         )
-                    bt.logging.info(f"Weights set successfully: {weights}.")
+                    if result:
+                        bt.logging.info(f"Weights set successfully: {weights}.")
+                    else:
+                        bt.logging.error(f"Error setting weights: {message}")
                 except Exception as e:
                     bt.logging.error(f"Error setting weights: {e}")
             else:
@@ -204,10 +213,9 @@ async def main(config):
             await asyncio.sleep(1)
         else:
             bt.logging.info(f"Waiting for epoch to end... {config.epoch_length - (current_block % config.epoch_length)} blocks remaining.")
-            await asyncio.sleep(3)
+            await asyncio.sleep(1)
 
 
 if __name__ == "__main__":
     config = get_config()
     asyncio.run(main(config))
-
