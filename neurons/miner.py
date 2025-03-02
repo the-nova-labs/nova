@@ -155,12 +155,12 @@ class Miner:
                             best_stake = hotkey_stake
                             current_protein = commit.data
 
-                    if current_protein is not None:
-                        bt.logging.info(f'Challenge protein: {current_protein}')
-                        return current_protein
-                    else:
-                        bt.logging.info(f'No protein set yet. Waiting...')
-                        await asyncio.sleep(12)
+                if current_protein is not None:
+                    bt.logging.info(f'Challenge protein: {current_protein}')
+                    return current_protein
+                else:
+                    bt.logging.info(f'No protein set yet. Waiting...')
+                    await asyncio.sleep(12)
 
             except Exception as e:
                 bt.logging.error(f'Error getting challenge protein: {e}')
