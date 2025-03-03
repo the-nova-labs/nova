@@ -40,5 +40,5 @@ You can download the trained weights from [our Hugging Face repo](https://huggin
 and place it in the `PSICHIC/trained_weights/PDBv2020_PSICHIC` folder by running:
 ```
 wget -O PSICHIC/trained_weights/PDBv2020_PSICHIC/model.pt \ 
-  https://huggingface.co/Metanova/PSICHIC/resolve/main/model.pt
+  https://huggingface.co/Metanova/PSICHIC/blob/main/model.pt
 ```
