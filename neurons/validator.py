@@ -28,6 +28,7 @@ def get_config():
 
     config = bt.config(parser)
     config.netuid = 68
+    config.network = os.environ.get("SUBTENSOR_NETWORK")
     node = SubstrateInterface(url=config.network)
     config.epoch_length = node.query("SubtensorModule", "Tempo", [config.netuid]).value
 
