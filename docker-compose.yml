@@ -1,6 +1,6 @@
 services:
   nova:
-    image: ghcr.io/metanova-labs/nova:latest
+    image: nova
     env_file:
       - .env
     environment:
