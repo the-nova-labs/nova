@@ -3,10 +3,18 @@ services:
     image: ghcr.io/metanova-labs/nova:latest
     env_file:
       - .env
-    args:
-      DEVICE_OVERRIDE: "none" # Change to "cpu" if needed.
+    environment:
+      DEVICE_OVERRIDE: ${DEVICE_OVERRIDE}
+      VALIDATOR_API_KEY: ${VALIDATOR_API_KEY}
+      WALLET_NAME: ${WALLET_NAME}
+      WALLET_HOTKEY: ${WALLET_HOTKEY}
+      SUBTENSOR_NETWORK: ${SUBTENSOR_NETWORK}
+      RUN_MODE: ${RUN_MODE}
+      HOST_HOME: ${HOST_HOME}
     entrypoint: [ "/scripts/entrypoint.sh" ]
     command: [ "--logging.debug" ]
+    volumes:
+      - ${HOST_HOME}/.bittensor/wallets/${WALLET_NAME}/hotkeys:/root/.bittensor/wallets/${WALLET_NAME}/hotkeys
 
   watchtower:
     image: containrrr/watchtower
