@@ -17,16 +17,6 @@ else
     exit 1
 fi
 
-# Overwrite PSICHIC/runtime_config.py
-if [[ -n "$DEVICE_OVERRIDE" && "$DEVICE_OVERRIDE" != "none"] ]]; then
-    sed -i 's/DEVICE = "cuda:0"/DEVICE = "'"$DEVICE_OVERRIDE"'"/g' /root/PSICHIC/runtime_config.py;
-fi
-
-# Overwrite my_utils.py
-if [[ -n "$VALIDATOR_API_KEY" && "$VALIDATOR_API_KEY" != "none" ]]; then
-    sed -i 's/headers = {"x-api-key": api_key}/headers = {"x-api-key": "'"$VALIDATOR_API_KEY"'"}/g' /root/my_utils.py;
-fi
-
 # Build the command-line arguments array
 ARGS=("$@")
 
