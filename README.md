@@ -19,7 +19,7 @@ NOVA harnesses global compute and collective intelligence to navigate huge unexp
 ```
 2. Build image:
 ```
-    docker build -t nova .
+    docker build -t ghcr.io/metanova-labs/nova:latest .
 ```
 This will install all dependencies and set everything up for you to run either as a miner or a validator. Updates to this repo will be applies automatically with Watchtower.
 
