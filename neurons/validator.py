@@ -211,6 +211,11 @@ async def main(config):
 
             # Sleep briefly to prevent busy-waiting (adjust sleep time as needed).
             await asyncio.sleep(1)
+            
+        elif current_block % (config.epoch_length/2) == 0:
+            subtensor = bt.async_subtensor(network=config.network)
+            await subtensor.initialize()
+            
         else:
             bt.logging.info(f"Waiting for epoch to end... {config.epoch_length - (current_block % config.epoch_length)} blocks remaining.")
             await asyncio.sleep(1)
