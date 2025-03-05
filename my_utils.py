@@ -4,11 +4,11 @@ import json
 from dotenv import load_dotenv
 import bittensor as bt
 
-load_dotenv(override=True)
+#load_dotenv(override=True)
 
 def get_smiles(product_name):
 
-    api_key = os.environ.get("validator_api_key")
+    api_key = os.environ.get("VALIDATOR_API_KEY")
     if not api_key:
         raise ValueError("validator_api_key environment variable not set.")
 
@@ -23,7 +23,7 @@ def get_smiles(product_name):
     return data.get("smiles")
 
 def get_random_protein():
-    api_key = os.environ.get("validator_api_key")
+    api_key = os.environ.get("VALIDATOR_API_KEY")
     if not api_key:
         raise ValueError("validator_api_key environment variable not set contact nova team for api key.")
 
