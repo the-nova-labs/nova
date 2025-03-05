@@ -23,7 +23,6 @@ def get_config():
     and subtensor client.
     """
     parser = argparse.ArgumentParser('Nova')
-    parser.add_argument("--network", default='ws://localhost:9944')
     bt.wallet.add_args(parser)
     bt.subtensor.add_args(parser)
 
