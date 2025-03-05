@@ -13,7 +13,7 @@ NOVA harnesses global compute and collective intelligence to navigate huge unexp
     HOST_HOME=/home/<your_username>
     WALLET_NAME=<your_wallet_name>
     WALLET_HOTKEY=<yout_hotkey_name>
-    SUBTENSOR_NETWORK=wss://entrypoint-finney.opentensor.ai:443  # or your local node
+    SUBTENSOR_NETWORK=wss://archive.chain.opentensor.ai:443  # or your local node
     RUN_MODE=validator     #or miner
     DEVICE_OVERRIDE=cpu    #or none to run on GPU
 ```
