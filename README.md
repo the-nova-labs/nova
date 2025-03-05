@@ -27,7 +27,7 @@ This will install all dependencies and set everything up for you to run either a
 `docker-compose up -d`
 	
  4. To view logs:
-`docker logs -f nova`
+`docker logs -f <container_name>`
 	
    
 
