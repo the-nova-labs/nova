@@ -143,17 +143,9 @@ class Miner:
                 previous_commitments = await self.get_commitments(block=current_block)
                 #print(previous_commitments)
 
-                # Determine the current protein as that set by the validator with the highest stake.
-                best_stake = -math.inf
-                current_protein = None
-                for index, (hotkey, commit) in enumerate(previous_commitments.items()):
-                    if current_block - commit.block <= self.epoch_length:
-                        # Access the stake for the given hotkey from the metagraph.
-                        hotkey_stake = previous_metagraph.S[index]
-                        # Choose the commitment with the highest stake and valid data.
-                        if hotkey_stake > best_stake and commit.data is not None:
-                            best_stake = hotkey_stake
-                            current_protein = commit.data
+                # Determine the current protein as that set by the team's validator
+                commitments = {k: v for k, v in previous_commitments.items() if current_block - v.block <= self.epoch_length and v.uid == 5}
+                current_protein = [v.data for v in commitments.values()][0]                
 
                 if current_protein is not None:
                     bt.logging.info(f'Challenge protein: {current_protein}')
