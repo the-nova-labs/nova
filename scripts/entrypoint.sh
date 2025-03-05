@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Download model file from huggingface to avoid errors
+wget -O PSICHIC/trained_weights/PDBv2020_PSICHIC/model.pt https://huggingface.co/Metanova/PSICHIC/resolve/main/model.pt
+
 # Determine which script to run based on RUN_MODE (default to miner if not set)
 if [ -z "$RUN_MODE" ]; then
     echo "RUN_MODE not set, defaulting to miner."
@@ -12,6 +15,16 @@ elif [ "$RUN_MODE" = "validator" ]; then
 else
     echo "Unknown RUN_MODE: ${RUN_MODE}. Should be 'miner' or 'validator'."
     exit 1
+fi
+
+# Overwrite PSICHIC/runtime_config.py
+if [[ -n "$DEVICE_OVERRIDE" && "$DEVICE_OVERRIDE" != "none"] ]]; then
+    sed -i 's/DEVICE = "cuda:0"/DEVICE = "'"$DEVICE_OVERRIDE"'"/g' /root/PSICHIC/runtime_config.py;
+fi
+
+# Overwrite my_utils.py
+if [[ -n "$VALIDATOR_API_KEY" && "$VALIDATOR_API_KEY" != "none" ]]; then
+    sed -i 's/headers = {"x-api-key": api_key}/headers = {"x-api-key": "'"$VALIDATOR_API_KEY"'"}/g' /root/my_utils.py;
 fi
 
 # Build the command-line arguments array
