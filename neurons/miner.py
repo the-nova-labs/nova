@@ -10,6 +10,7 @@ import sys
 import bittensor as bt
 from bittensor.core.chain_data.utils import decode_metadata
 from bittensor.core.errors import MetadataError
+from substrateinterface import SubstrateInterface
 from datasets import load_dataset
 from huggingface_hub import list_repo_files
 import pandas as pd
@@ -25,9 +26,11 @@ class Miner:
         self.hugging_face_dataset_repo = 'Metanova/SAVI-2020'
         self.psichic_result_column_name = 'predicted_binding_affinity'
         self.chunk_size = 128
-        self.epoch_length = 360
+        self.tolerance = 3
 
         self.config = self.get_config()
+        node = SubstrateInterface(url=self.config.network)
+        self.epoch_length = node.query("SubtensorModule", "Tempo", [self.config.netuid]).value
         self.setup_logging()
         self.current_block = 0
         self.current_challenge_protein = None
@@ -45,7 +48,7 @@ class Miner:
         # Set up the configuration parser.
         parser = argparse.ArgumentParser()
         # Adds override arguments for network.
-        parser.add_argument('--network', default='finney', help='Network to use')
+        parser.add_argument('--network', default='wss://archive.chain.opentensor.ai:443', help='Network to use')
         # Adds override arguments for network and netuid.
         parser.add_argument('--netuid', type=int, default=68, help="The chain subnet uid.")
         # Adds subtensor specific arguments.
@@ -89,63 +92,109 @@ class Miner:
             self.subtensor = subtensor
             bt.logging.info(f"Subtensor: {self.subtensor}")
 
+            # Initialize and sync metagraph
             self.metagraph = await self.subtensor.metagraph(self.config.netuid)
-            bt.logging.info(f"Metagraph: {self.metagraph}")
+            await self.metagraph.sync()
+            bt.logging.info(f"Metagraph synced: {self.metagraph}")
+            
+            # Log stake distribution
+            stakes = self.metagraph.S.tolist()
+            sorted_stakes = sorted([(i, s) for i, s in enumerate(stakes)], key=lambda x: x[1], reverse=True)
+            bt.logging.info("Top 5 validators by stake:")
+            for uid, stake in sorted_stakes[:5]:
+                bt.logging.info(f"UID: {uid}, Stake: {stake}")
 
-    async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int) -> dict:
-    """
-    Retrieve commitments for all miners on a given subnet (netuid) at a specific block.
+    async def get_commitments(self, metagraph, block_hash: str) -> dict:
 
-    Args:
-        subtensor: The subtensor client object.
-        netuid (int): The network ID.
-        block (int, optional): The block number to query. Defaults to None.
+        """
+        Retrieve commitments for all miners on a given subnet (netuid) at a specific block.
 
-    Returns:
-        dict: A mapping from hotkey to a SimpleNamespace containing uid, hotkey,
-              block, and decoded commitment data.
-    """
+        Args:
+            subtensor: The subtensor client object.
+            netuid (int): The network ID.
+            block (int, optional): The block number to query. Defaults to None.
 
-    # Gather commitment queries for all validators (hotkeys) concurrently.
-    commits = await asyncio.gather(*[
-        subtensor.substrate.query(
-            module="Commitments",
-            storage_function="CommitmentOf",
-            params=[netuid, hotkey],
-            block_hash=block_hash,
-        ) for hotkey in metagraph.hotkeys
-    ])
+        Returns:
+            dict: A mapping from hotkey to a SimpleNamespace containing uid, hotkey,
+                block, and decoded commitment data.
+        """
 
-    # Process the results and build a dictionary with additional metadata.
-    result = {}
-    for uid, hotkey in enumerate(metagraph.hotkeys):
-        commit = cast(dict, commits[uid])
-        if commit:
-            result[hotkey] = SimpleNamespace(
-                uid=uid,
-                hotkey=hotkey,
-                block=commit['block'],
-                data=decode_metadata(commit)
-            )
-    return result
+        # Gather commitment queries for all validators (hotkeys) concurrently.
+        commits = await asyncio.gather(*[
+            self.subtensor.substrate.query(
+                module="Commitments",
+                storage_function="CommitmentOf",
+                params=[self.config.netuid, hotkey],
+                block_hash=block_hash,
+            ) for hotkey in metagraph.hotkeys
+        ])
+
+        # Process the results and build a dictionary with additional metadata.
+        result = {}
+        for uid, hotkey in enumerate(metagraph.hotkeys):
+            commit = cast(dict, commits[uid])
+            if commit:
+                result[hotkey] = SimpleNamespace(
+                    uid=uid,
+                    hotkey=hotkey,
+                    block=commit['block'],
+                    data=decode_metadata(commit)
+                )
+        return result
 
     async def get_current_challenge_protein(self):
         while True:
             try:
                 current_block = await self.subtensor.get_current_block()
-                bt.logging.debug(f'Current block: {current_block}')
+                bt.logging.info(f'Current block: {current_block}, Epoch length: {self.epoch_length}')
+                bt.logging.info(f'Checking block: {current_block - self.epoch_length}')
 
                 # Check if any commitment has been made on the last epoch
-                prev_epoch = current_block - self.epoch_length
-                previous_metagraph = await self.subtensor.metagraph(self.config.netuid, block=current_block)
-                previous_commitments = await self.get_commitments(block=current_block)
+                block_to_check = current_block - self.epoch_length
+                previous_metagraph = await self.subtensor.metagraph(self.config.netuid, block=block_to_check + self.tolerance)
+                block_hash_to_check = await self.subtensor.determine_block_hash(block_to_check + self.tolerance)
+                bt.logging.info(f'Using block hash from block: {block_to_check + self.tolerance}')
+                
+                previous_commitments = await self.get_commitments(previous_metagraph, block_hash=block_hash_to_check)
+                bt.logging.info(f'Found {len(previous_commitments)} total commitments')
+                
+                # More lenient filtering - only check if commitment is from current or previous epoch
+                current_epoch = current_block // self.epoch_length
+                epoch_commitments = {
+                    k: v for k, v in previous_commitments.items() 
+                    if v.block // self.epoch_length >= current_epoch - 1
+                }
+                bt.logging.info(f'Found {len(epoch_commitments)} commitments within epoch window')
 
-                # Determine the current protein as that set by the team's validator
-                commitments = {k: v for k, v in previous_commitments.items() if current_block - v.block <= self.epoch_length and v.uid == 5}
-                current_protein = [v.data for v in commitments.values()][0]                
+                if not epoch_commitments:
+                    bt.logging.warning("No commitments found within epoch window")
+                    await asyncio.sleep(12)
+                    continue
 
+                # Find validator with highest stake among valid commitments
+                max_stake = -1
+                high_stake_protein_commitment = None
+                for commit in epoch_commitments.values():
+                    stake = float(previous_metagraph.S[commit.uid])
+                    # bt.logging.debug(f"Checking validator {commit.uid} with stake {stake}")
+                    if stake > max_stake:
+                        max_stake = stake
+                        high_stake_protein_commitment = commit
+
+                if not high_stake_protein_commitment:
+                    bt.logging.error("Error getting current protein commitment.")
+                    current_protein = None
+                    continue
+
+                if max_stake <= 0:
+                    bt.logging.warning(f"Highest staking validator has 0 or negative stake ({max_stake}). This might indicate a metagraph sync issue.")
+                    await self.metagraph.sync()
+                    await asyncio.sleep(12)
+                    continue
+
+                current_protein = high_stake_protein_commitment.data
                 if current_protein is not None:
-                    bt.logging.info(f'Challenge protein: {current_protein}')
+                    bt.logging.info(f"Current protein: {current_protein} from validator {high_stake_protein_commitment.uid} with stake: {max_stake}")
                     return current_protein
                 else:
                     bt.logging.info(f'No protein set yet. Waiting...')
@@ -283,26 +332,25 @@ class Miner:
                 await asyncio.sleep(1)
 
                 # Periodically update our knowledge of the network graph.
-                #if step % 60 == 0:
-                #    await self.metagraph.sync()
-                #    log = (
-                #        f'Block: {self.metagraph.block.item()} | '
-                #        f'Incentive: {self.metagraph.I[self.my_subnet_uid]} | '
-                #    )
-                #    bt.logging.info(log)
-                #step += 1
-                #asyncio.sleep(1)
-
+                if self.current_block % 60 == 0:
+                    await self.metagraph.sync()
+                    log = (
+                        f'Block: {self.metagraph.block.item()} | '
+                        f'Number of nodes: {self.metagraph.n} | '
+                        f'Current epoch: {self.metagraph.block.item() // self.epoch_length}'
+                    )
+                    bt.logging.info(log)
+                self.current_block += 1
 
             except RuntimeError as e:
                 bt.logging.error(e)
                 traceback.print_exc()
 
             except KeyboardInterrupt:
-                bt.logging.success("Keyboard interrupt detected. Exiting validator.")
+                bt.logging.success("Keyboard interrupt detected. Exiting miner.")
                 exit()
 
-# Run the validator.
+# Run the miner.
 if __name__ == "__main__":
     miner = Miner()
     asyncio.run(miner.run())
