@@ -190,6 +190,8 @@ async def main(config):
             current_protein = high_stake_protein_commitment.data
             bt.logging.info(f"Current protein: {current_protein}")
 
+            protein_sequence = get_sequence_from_protein_code(current_protein)
+
             # Initialize PSICHIC for new protein
             bt.logging.info(f'Initializing model for protein sequence: {protein_sequence}')
             try:
