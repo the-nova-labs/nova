@@ -92,44 +92,42 @@ class Miner:
             self.metagraph = await self.subtensor.metagraph(self.config.netuid)
             bt.logging.info(f"Metagraph: {self.metagraph}")
 
-    async def get_commitments(self, block: int = None) -> dict:
-        """
-        Retrieve commitments for all miners on a given subnet (netuid) at a specific block.
+    async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int) -> dict:
+    """
+    Retrieve commitments for all miners on a given subnet (netuid) at a specific block.
 
-        Args:
-            block (int, optional): The block number to query. Defaults to None.
+    Args:
+        subtensor: The subtensor client object.
+        netuid (int): The network ID.
+        block (int, optional): The block number to query. Defaults to None.
 
-        Returns:
-            dict: A mapping from hotkey to a SimpleNamespace containing uid, hotkey,
-                block, and decoded commitment data.
-        """
-        # Use the provided netuid to fetch the corresponding metagraph.
-        metagraph = await self.subtensor.metagraph(self.config.netuid)
-        # Determine the block hash if a block is specified.
-        block_hash = await self.subtensor.determine_block_hash(block) if block is not None else None
+    Returns:
+        dict: A mapping from hotkey to a SimpleNamespace containing uid, hotkey,
+              block, and decoded commitment data.
+    """
 
-        # Gather commitment queries for all validators (hotkeys) concurrently.
-        commits = await asyncio.gather(*[
-            self.subtensor.substrate.query(
-                module="Commitments",
-                storage_function="CommitmentOf",
-                params=[self.config.netuid, hotkey],
-                block_hash=block_hash,
-            ) for hotkey in metagraph.hotkeys
-        ])
+    # Gather commitment queries for all validators (hotkeys) concurrently.
+    commits = await asyncio.gather(*[
+        subtensor.substrate.query(
+            module="Commitments",
+            storage_function="CommitmentOf",
+            params=[netuid, hotkey],
+            block_hash=block_hash,
+        ) for hotkey in metagraph.hotkeys
+    ])
 
-        # Process the results and build a dictionary with additional metadata.
-        result = {}
-        for uid, hotkey in enumerate(metagraph.hotkeys):
-            commit = cast(dict, commits[uid])
-            if commit:
-                result[hotkey] = SimpleNamespace(
-                    uid=uid,
-                    hotkey=hotkey,
-                    block=commit['block'],
-                    data=decode_metadata(commit)
-                )
-        return result
+    # Process the results and build a dictionary with additional metadata.
+    result = {}
+    for uid, hotkey in enumerate(metagraph.hotkeys):
+        commit = cast(dict, commits[uid])
+        if commit:
+            result[hotkey] = SimpleNamespace(
+                uid=uid,
+                hotkey=hotkey,
+                block=commit['block'],
+                data=decode_metadata(commit)
+            )
+    return result
 
     async def get_current_challenge_protein(self):
         while True:
@@ -141,7 +139,6 @@ class Miner:
                 prev_epoch = current_block - self.epoch_length
                 previous_metagraph = await self.subtensor.metagraph(self.config.netuid, block=current_block)
                 previous_commitments = await self.get_commitments(block=current_block)
-                #print(previous_commitments)
 
                 # Determine the current protein as that set by the team's validator
                 commitments = {k: v for k, v in previous_commitments.items() if current_block - v.block <= self.epoch_length and v.uid == 5}
@@ -249,7 +246,12 @@ class Miner:
                         self.psichic_wrapper.run_challenge_start(protein_sequence)
                         bt.logging.info('Model initialized successfully.')
                     except Exception as e:
-                        bt.logging.error(f'Error initializing model: {e}')
+                        try:
+                            os.system(f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/PDBv2020_PSICHIC/model.pt')} https://huggingface.co/Metanova/PSICHIC/resolve/main/model.pt")
+                            self.psichic_wrapper.run_challenge_start(protein_sequence)
+                            bt.logging.info('Model initialized successfully.')
+                        except Exception as e:
+                            bt.logging.error(f'Error initializing model: {e}')
 
                     # Start inference loop
                     try:
