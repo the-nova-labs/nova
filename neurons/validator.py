@@ -190,13 +190,19 @@ async def main(config):
             current_protein = high_stake_protein_commitment.data
             bt.logging.info(f"Current protein: {current_protein}")
 
-            # Initialize psichic on the current protein
-            protein_sequence = get_sequence_from_protein_code(current_protein)
+            # Initialize PSICHIC for new protein
+            bt.logging.info(f'Initializing model for protein sequence: {protein_sequence}')
             try:
-                psichic.run_challenge_start(protein_sequence)
-                bt.logging.info(f"Model initialized successfully for protein {current_protein}.")
+                self.psichic_wrapper.run_challenge_start(protein_sequence)
+                bt.logging.info('Model initialized successfully.')
             except Exception as e:
-                bt.logging.error(f"Error initializing model: {e}")
+                try:
+                    os.system(f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/PDBv2020_PSICHIC/model.pt')} https://huggingface.co/Metanova/PSICHIC/resolve/main/model.pt")
+                    self.psichic_wrapper.run_challenge_start(protein_sequence)
+                    bt.logging.info('Model initialized successfully.')
+                except Exception as e:
+                    bt.logging.error(f'Error initializing model: {e}')
+
             # Retrieve the latest commitments (current epoch).
             current_block_hash = await subtensor.determine_block_hash(current_block)
             current_commitments = await get_commitments(subtensor, metagraph, current_block_hash, netuid=config.netuid)
