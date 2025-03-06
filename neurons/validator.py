@@ -7,6 +7,8 @@ from typing import cast
 from types import SimpleNamespace
 import bittensor as bt
 from substrateinterface import SubstrateInterface
+import requests
+from dotenv import load_dotenv
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
@@ -22,6 +24,7 @@ def get_config():
     Parse command-line arguments to set up the configuration for the wallet
     and subtensor client.
     """
+    load_dotenv()
     parser = argparse.ArgumentParser('Nova')
     bt.wallet.add_args(parser)
     bt.subtensor.add_args(parser)
@@ -34,6 +37,25 @@ def get_config():
 
     return config
 
+async def check_registration(wallet, subtensor, netuid):
+    """
+    Confirm that the wallet hotkey is in the metagraph for the specified netuid.
+    Logs an error and exits if it's not registered. Warns if stake is less than 1000.
+    """
+    metagraph = await subtensor.metagraph(netuid=netuid)
+    my_hotkey_ss58 = wallet.hotkey.ss58_address
+
+    if my_hotkey_ss58 not in metagraph.hotkeys:
+        bt.logging.error(f"Hotkey {my_hotkey_ss58} is not registered on netuid {netuid}.")
+        bt.logging.error("Are you sure you've registered and staked?")
+        sys.exit(1) 
+    
+    uid = metagraph.hotkeys.index(my_hotkey_ss58)
+    myStake = metagraph.S[uid]
+    bt.logging.info(f"Hotkey {my_hotkey_ss58} found with UID={uid} and stake={myStake}")
+
+    if (myStake < 1000):
+        bt.logging.warning(f"Hotkey has less than 1000 stake, unable to validate")
 
 def run_model(protein: str, molecule: str) -> float:
     """
@@ -114,11 +136,15 @@ async def main(config):
         config: Configuration object for subtensor and wallet.
     """
     wallet = bt.wallet(config=config)
-    tolerance = 3 # block tolerance window for validators to commit protein
 
     # Initialize the asynchronous subtensor client.
     subtensor = bt.async_subtensor(network=config.network)
     await subtensor.initialize()
+
+    # Check if the hotkey is registered and has at least 1000 stake.
+    await check_registration(wallet, subtensor, config.netuid)
+
+    tolerance = 3 # block tolerance window for validators to commit protein
 
     while True:
         # Fetch the current metagraph for the given subnet (netuid 68).
@@ -146,17 +172,17 @@ async def main(config):
             best_stake = -math.inf
             current_protein = None
 
-            for offset in range(tolerance):
-                block_to_check = prev_epoch + offset
-                block_hash_to_check = await subtensor.determine_block_hash(block_to_check)
-                epoch_metagraph = await subtensor.metagraph(config.netuid, block=block_to_check)
-                epoch_commitments = await get_commitments(subtensor, epoch_metagraph, block_hash_to_check, netuid=config.netuid)
-                for index, (hotkey, commit) in enumerate(epoch_commitments.items()):
-                    if current_block - commit.block <= (config.epoch_length + tolerance):
-                        hotkey_stake = epoch_metagraph.S[index]
-                        if hotkey_stake > best_stake and commit.data is not None:
-                            best_stake = hotkey_stake
-                            current_protein = commit.data
+            block_to_check = prev_epoch
+            block_hash_to_check = await subtensor.determine_block_hash(block_to_check + tolerance)  
+            epoch_metagraph = await subtensor.metagraph(config.netuid, block=block_to_check + tolerance)
+            epoch_commitments = await get_commitments(subtensor, epoch_metagraph, block_hash_to_check, netuid=config.netuid)
+            epoch_commitments = {k: v for k, v in epoch_commitments.items() if current_block - v.block <= (config.epoch_length + tolerance)}
+            try:
+                current_protein = [v.data for v in epoch_commitments.values() if v.uid == 5][0]
+            except Exception as e:
+                bt.logging.error(f"Error getting current protein: {e}")
+                current_protein = None
+                continue
 
             bt.logging.info(f"Current protein: {current_protein}")
 
@@ -167,16 +193,17 @@ async def main(config):
                 bt.logging.info(f"Model initialized successfully for protein {current_protein}.")
             except Exception as e:
                 bt.logging.error(f"Error initializing model: {e}")
-
             # Retrieve the latest commitments (current epoch).
             current_block_hash = await subtensor.determine_block_hash(current_block)
             current_commitments = await get_commitments(subtensor, metagraph, current_block_hash, netuid=config.netuid)
 
             # Identify the best molecule based on the scoring function.
             best_score = -math.inf
+            total_commits = 0
             best_molecule = None
             for hotkey, commit in current_commitments.items():
                 if current_block - commit.block <= config.epoch_length:
+                    total_commits += 1
                     # Assuming that 'commit.data' contains the necessary molecule data; adjust if needed.
                     score = run_model(protein=current_protein, molecule=commit.data)
                     # If the score is higher, or equal but the block is earlier, update the best.
@@ -212,9 +239,12 @@ async def main(config):
             # Sleep briefly to prevent busy-waiting (adjust sleep time as needed).
             await asyncio.sleep(1)
             
+        # keep validator alive
         elif current_block % (config.epoch_length/2) == 0:
             subtensor = bt.async_subtensor(network=config.network)
             await subtensor.initialize()
+            bt.logging.info("Validator reset subtensor connection.")
+            await asyncio.sleep(12) # Sleep for 1 block to avoid unncessary re-connection
             
         else:
             bt.logging.info(f"Waiting for epoch to end... {config.epoch_length - (current_block % config.epoch_length)} blocks remaining.")
