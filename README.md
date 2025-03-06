@@ -6,22 +6,6 @@
 
 NOVA harnesses global compute and collective intelligence to navigate huge unexplored chemical spaces, uncovering breakthrough compounds at a fraction of the cost and time.
 
-## Project Structure
-
-```
-nova/
-├── neurons/           # Core components
-│   ├── miner.py      # Miner implementation
-│   └── validator.py  # Validator implementation
-├── requirements/      # Dependency specifications
-│   ├── requirements_cpu.txt
-│   └── requiremets_cu124.txt
-├── PSICHIC/          # PSICHIC integration
-├── install_deps_cpu.sh
-├── install_deps_cu124.sh
-└── my_utils.py       # Utility functions
-```
-
 ## System Requirements
 
 - Ubuntu 24.04 LTS (recommended)
@@ -77,31 +61,13 @@ The project uses several configuration files:
 - `.env`: Environment variables and API keys
 - `requirements/`: Dependency specifications for different environments
 - Command-line arguments for runtime configuration
+- `PSICHIC/runtime_config.py`: runtime configurations for PSICHIC model
 
-## Development Setup
-
-1. Create a virtual environment:
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-2. Install development dependencies:
-```bash
-pip install -r requirements/requirements_cpu.txt  # or cu124 for GPU
-```
 
 ## For Validators
 
 DM the NOVA team to obtain an API key.
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-[Add your license information here]
 
 ## Support
 
