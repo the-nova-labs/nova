@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class RuntimeConfig:
     PSICHIC_PATH = os.path.dirname(os.path.abspath(__file__))
