@@ -195,12 +195,12 @@ async def main(config):
             # Initialize PSICHIC for new protein
             bt.logging.info(f'Initializing model for protein sequence: {protein_sequence}')
             try:
-                self.psichic_wrapper.run_challenge_start(protein_sequence)
+                psichic.run_challenge_start(protein_sequence)
                 bt.logging.info('Model initialized successfully.')
             except Exception as e:
                 try:
                     os.system(f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/PDBv2020_PSICHIC/model.pt')} https://huggingface.co/Metanova/PSICHIC/resolve/main/model.pt")
-                    self.psichic_wrapper.run_challenge_start(protein_sequence)
+                    psichic.run_challenge_start(protein_sequence)
                     bt.logging.info('Model initialized successfully.')
                 except Exception as e:
                     bt.logging.error(f'Error initializing model: {e}')
