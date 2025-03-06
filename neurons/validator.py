@@ -177,13 +177,17 @@ async def main(config):
             epoch_metagraph = await subtensor.metagraph(config.netuid, block=block_to_check + tolerance)
             epoch_commitments = await get_commitments(subtensor, epoch_metagraph, block_hash_to_check, netuid=config.netuid)
             epoch_commitments = {k: v for k, v in epoch_commitments.items() if current_block - v.block <= (config.epoch_length + tolerance)}
-            try:
-                current_protein = [v.data for v in epoch_commitments.values() if v.uid == 5][0]
-            except Exception as e:
-                bt.logging.error(f"Error getting current protein: {e}")
+            high_stake_protein_commitment = max(
+                epoch_commitments.values(),
+                key=lambda commit: epoch_metagraph.S[commit.uid],
+                default=None
+            )
+            if not high_stake_protein_commitment:
+                bt.logging.error("Error getting current protein commitment.")
                 current_protein = None
                 continue
 
+            current_protein = high_stake_protein_commitment.data
             bt.logging.info(f"Current protein: {current_protein}")
 
             # Initialize psichic on the current protein
