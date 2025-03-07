@@ -1,37 +1,74 @@
 # NOVA - SN68
+
 ## High-throughput ML-driven drug screening.
+
 ### Accelerating drug discovery, powered by Bittensor.
+
 NOVA harnesses global compute and collective intelligence to navigate huge unexplored chemical spaces, uncovering breakthrough compounds at a fraction of the cost and time.
 
+## System Requirements
 
-## Installation and running
-> Recommended: Ubuntu 24.04 LTS, Python 3.12
+- Ubuntu 24.04 LTS (recommended)
+- Python 3.12
+- CUDA 12.4 (for GPU support)
+- Sufficient RAM for ML model operations
+- Internet connection for network participation
 
-1. Prepare your .env file:
+## Installation and Running
+
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd nova
 ```
-    VALIDATOR_API_KEY=<your_api_key>   # validators only
-    HOST_HOME=/home/<your_username>
-    WALLET_NAME=<your_wallet_name>
-    WALLET_HOTKEY=<yout_hotkey_name>
-    SUBTENSOR_NETWORK=wss://archive.chain.opentensor.ai:443  # or your local node
-    RUN_MODE=validator     #or miner
-    DEVICE_OVERRIDE=cpu    #or none to run on GPU
+
+2. Prepare your .env file:
 ```
-2. Build image:
+VALIDATOR_API_KEY=<your_api_key> # validators only
+
+# For validators, we highly recommend running a local node!
+SUBTENSOR_NETWORK="wss://archive.chain.opentensor.ai:443 
+
+DEVICE_OVERRIDE="cpu" #or none to run on GPU
 ```
-    docker build -t ghcr.io/metanova-labs/nova:latest .
+
+3. Install dependencies:
+   - For CPU:
+   ```bash
+   bash install_deps_cpu.sh
+   ```
+   - For CUDA 12.4:
+   ```bash
+   bash install_deps_cu124.sh
+   ```
+
+4. Run:
+```bash
+# Activate your virtual environment:
+source .venv/bin/activate
+
+# Run your script:
+# miner:
+python3 neurons/miner.py --wallet.name <your_wallet> --wallet.hotkey <your_hotkey> --logging.debug
+
+# validator:
+python3 neurons/validator.py --wallet.name <your_wallet> --wallet.hotkey <your_hotkey> --logging.debug
 ```
-This will install all dependencies and set everything up for you to run either as a miner or a validator. Updates to this repo will be applies automatically with Watchtower.
 
-3. Running:
-`docker-compose up -d`
-	
- 4. To view logs:
-`docker logs -f <container_name>`
-	
-   
+## Configuration
+
+The project uses several configuration files:
+- `.env`: Environment variables and API keys
+- `requirements/`: Dependency specifications for different environments
+- Command-line arguments for runtime configuration
+- `PSICHIC/runtime_config.py`: runtime configurations for PSICHIC model
 
 
-### For validators: 
- DM the NOVA team to obtain an API key.
+## For Validators
 
+DM the NOVA team to obtain an API key.
+
+
+## Support
+
+For support, please open an issue in the repository or contact the NOVA team.
