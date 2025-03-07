@@ -142,67 +142,6 @@ class Miner:
                 )
         return result
 
-    async def get_current_challenge_protein(self):
-        while True:
-            try:
-                current_block = await self.subtensor.get_current_block()
-                bt.logging.info(f'Current block: {current_block}, Epoch length: {self.epoch_length}')
-                bt.logging.info(f'Checking block: {current_block - self.epoch_length}')
-
-                # Check if any commitment has been made on the last epoch
-                block_to_check = current_block - self.epoch_length
-                previous_metagraph = await self.subtensor.metagraph(self.config.netuid, block=block_to_check + self.tolerance)
-                block_hash_to_check = await self.subtensor.determine_block_hash(block_to_check + self.tolerance)
-                bt.logging.info(f'Using block hash from block: {block_to_check + self.tolerance}')
-                
-                previous_commitments = await self.get_commitments(previous_metagraph, block_hash=block_hash_to_check)
-                bt.logging.info(f'Found {len(previous_commitments)} total commitments')
-                
-                # More lenient filtering - only check if commitment is from current or previous epoch
-                current_epoch = current_block // self.epoch_length
-                epoch_commitments = {
-                    k: v for k, v in previous_commitments.items() 
-                    if v.block // self.epoch_length >= current_epoch - 1
-                }
-                bt.logging.info(f'Found {len(epoch_commitments)} commitments within epoch window')
-
-                if not epoch_commitments:
-                    bt.logging.warning("No commitments found within epoch window")
-                    await asyncio.sleep(12)
-                    continue
-
-                # Find validator with highest stake among valid commitments
-                max_stake = -1
-                high_stake_protein_commitment = None
-                for commit in epoch_commitments.values():
-                    stake = float(previous_metagraph.S[commit.uid])
-                    # bt.logging.debug(f"Checking validator {commit.uid} with stake {stake}")
-                    if stake > max_stake:
-                        max_stake = stake
-                        high_stake_protein_commitment = commit
-
-                if not high_stake_protein_commitment:
-                    bt.logging.error("Error getting current protein commitment.")
-                    current_protein = None
-                    continue
-
-                if max_stake <= 0:
-                    bt.logging.warning(f"Highest staking validator has 0 or negative stake ({max_stake}). This might indicate a metagraph sync issue.")
-                    await self.metagraph.sync()
-                    await asyncio.sleep(12)
-                    continue
-
-                current_protein = high_stake_protein_commitment.data
-                if current_protein is not None:
-                    bt.logging.info(f"Current protein: {current_protein} from validator {high_stake_protein_commitment.uid} with stake: {max_stake}")
-                    return current_protein
-                else:
-                    bt.logging.info(f'No protein set yet. Waiting...')
-                    await asyncio.sleep(12)
-
-            except Exception as e:
-                bt.logging.error(f'Error getting challenge protein: {e}')
-                break
 
     def stream_random_chunk_from_dataset(self):
         # Streams a random chunk from the dataset repo on huggingface.
@@ -266,12 +205,35 @@ class Miner:
         await self.setup_bittensor_objects()
         while True:
             try:
-                self.current_challenge_protein = await self.get_current_challenge_protein()
+                current_block = await self.subtensor.get_current_block()
+                
+                # If we are at the epoch boundary, wait for the tolerance blocks to find a new protein
+                if current_block % self.epoch_length == 0:
+                    bt.logging.info(f"Epoch boundary at block {current_block}. Waiting {self.tolerance} blocks to find new protein.")
+                    final_block = current_block + self.tolerance
+                    while (await self.subtensor.get_current_block()) < final_block:
+                        await asyncio.sleep(12)
 
-                # Check if protein has changed
-                if self.current_challenge_protein != self.last_challenge_protein:
-                    bt.logging.info(f'Got new challenge protein: {self.current_challenge_protein}')
-                    self.last_challenge_protein = self.current_challenge_protein
+                    block_hash = await self.subtensor.determine_block_hash(final_block)
+                    commits = await self.get_commitments(self.metagraph, block_hash)
+                    # Filter out older commits so we only see the new ones from epoch start to epoch start + tolerance
+                    fresh_commits = {
+                        hotkey: commit
+                        for hotkey, commit in commits.items()
+                        if commit.block >= current_block
+                    }
+                    if not fresh_commits:
+                        bt.logging.info(f"No new protein commitments found in last {self.tolerance} blocks.")
+                    else:
+                        # Pick whichever has highest stake
+                        highest_stake_commit = max(
+                            fresh_commits.values(),
+                            key=lambda c: self.metagraph.S[c.uid],
+                            default=None
+                        )
+                        self.current_challenge_protein = highest_stake_commit.data
+                        self.last_challenge_protein = highest_stake_commit.data
+                        bt.logging.info(f"New protein: {self.current_challenge_protein} from UID={highest_stake_commit.uid}")
 
                     # If old task still running, set shutdown event
                     if self.inference_task:
