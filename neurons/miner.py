@@ -142,67 +142,6 @@ class Miner:
                 )
         return result
 
-    async def get_current_challenge_protein(self):
-        while True:
-            try:
-                current_block = await self.subtensor.get_current_block()
-                bt.logging.info(f'Current block: {current_block}, Epoch length: {self.epoch_length}')
-                bt.logging.info(f'Checking block: {current_block - self.epoch_length}')
-
-                # Check if any commitment has been made on the last epoch
-                block_to_check = current_block - self.epoch_length
-                previous_metagraph = await self.subtensor.metagraph(self.config.netuid, block=block_to_check + self.tolerance)
-                block_hash_to_check = await self.subtensor.determine_block_hash(block_to_check + self.tolerance)
-                bt.logging.info(f'Using block hash from block: {block_to_check + self.tolerance}')
-                
-                previous_commitments = await self.get_commitments(previous_metagraph, block_hash=block_hash_to_check)
-                bt.logging.info(f'Found {len(previous_commitments)} total commitments')
-                
-                # More lenient filtering - only check if commitment is from current or previous epoch
-                current_epoch = current_block // self.epoch_length
-                epoch_commitments = {
-                    k: v for k, v in previous_commitments.items() 
-                    if v.block // self.epoch_length >= current_epoch - 1
-                }
-                bt.logging.info(f'Found {len(epoch_commitments)} commitments within epoch window')
-
-                if not epoch_commitments:
-                    bt.logging.warning("No commitments found within epoch window")
-                    await asyncio.sleep(12)
-                    continue
-
-                # Find validator with highest stake among valid commitments
-                max_stake = -1
-                high_stake_protein_commitment = None
-                for commit in epoch_commitments.values():
-                    stake = float(previous_metagraph.S[commit.uid])
-                    # bt.logging.debug(f"Checking validator {commit.uid} with stake {stake}")
-                    if stake > max_stake:
-                        max_stake = stake
-                        high_stake_protein_commitment = commit
-
-                if not high_stake_protein_commitment:
-                    bt.logging.error("Error getting current protein commitment.")
-                    current_protein = None
-                    continue
-
-                if max_stake <= 0:
-                    bt.logging.warning(f"Highest staking validator has 0 or negative stake ({max_stake}). This might indicate a metagraph sync issue.")
-                    await self.metagraph.sync()
-                    await asyncio.sleep(12)
-                    continue
-
-                current_protein = high_stake_protein_commitment.data
-                if current_protein is not None:
-                    bt.logging.info(f"Current protein: {current_protein} from validator {high_stake_protein_commitment.uid} with stake: {max_stake}")
-                    return current_protein
-                else:
-                    bt.logging.info(f'No protein set yet. Waiting...')
-                    await asyncio.sleep(12)
-
-            except Exception as e:
-                bt.logging.error(f'Error getting challenge protein: {e}')
-                break
 
     def stream_random_chunk_from_dataset(self):
         # Streams a random chunk from the dataset repo on huggingface.
@@ -216,6 +155,37 @@ class Miner:
         dataset = dataset_dict['train']
         batched = dataset.batch(self.chunk_size)
         return batched
+    
+    async def get_protein_from_epoch_start(self, epoch_start: int):
+        """
+        Picks the highest-stake protein from the window [epoch_start .. epoch_start + tolerance].
+        """
+        final_block = epoch_start + self.tolerance
+        current_block = await self.subtensor.get_current_block()
+
+        if final_block > current_block:
+            while (await self.subtensor.get_current_block()) < final_block:
+                await asyncio.sleep(12)
+
+        block_hash = await self.subtensor.determine_block_hash(final_block)
+        commits = await self.get_commitments(self.metagraph, block_hash)
+
+        # Filter to keep only commits that occurred after or at epoch start
+        fresh_commits = {
+            hotkey: commit
+            for hotkey, commit in commits.items()
+            if commit.block >= epoch_start
+        }
+        if not fresh_commits:
+            bt.logging.info(f"No commits found in block window [{epoch_start}, {final_block}].")
+            return None
+
+        highest_stake_commit = max(
+            fresh_commits.values(),
+            key=lambda c: self.metagraph.S[c.uid],
+            default=None
+        )
+        return highest_stake_commit.data if highest_stake_commit else None
 
     async def run_psichic_model_loop(self):
         """
@@ -264,14 +234,42 @@ class Miner:
         # The Main Mining Loop.
         bt.logging.info("Starting miner loop.")
         await self.setup_bittensor_objects()
+
+        # Startup case: In case we start mid-epoch get most recent protein and start inference
+        current_block = await self.subtensor.get_current_block()
+        last_boundary = (current_block // self.epoch_length) * self.epoch_length
+        bt.logging.warning(f"Last boundary: {last_boundary}")
+        start_protein = await self.get_protein_from_epoch_start(last_boundary)
+        if start_protein:
+            self.current_challenge_protein = start_protein
+            self.last_challenge_protein = start_protein
+            bt.logging.info(f"Startup protein: {start_protein}")
+
+            protein_sequence = get_sequence_from_protein_code(start_protein)
+            try:
+                self.psichic_wrapper.run_challenge_start(protein_sequence)
+                bt.logging.info(f"Initialized model for {start_protein}")
+            except Exception as e:
+                bt.logging.error(f"Error initializing model: {e}")
+
+            try:
+                self.inference_task = asyncio.create_task(self.run_psichic_model_loop())
+                bt.logging.debug("Inference started on startup protein.")
+            except Exception as e:
+                bt.logging.error(f"Error starting inference: {e}")
+
+
         while True:
             try:
-                self.current_challenge_protein = await self.get_current_challenge_protein()
-
-                # Check if protein has changed
-                if self.current_challenge_protein != self.last_challenge_protein:
-                    bt.logging.info(f'Got new challenge protein: {self.current_challenge_protein}')
-                    self.last_challenge_protein = self.current_challenge_protein
+                current_block = await self.subtensor.get_current_block()
+                # If we are at the epoch boundary, wait for the tolerance blocks to find a new protein
+                if current_block % self.epoch_length == 0:
+                    bt.logging.info(f"Epoch boundary at block {current_block}, waiting {self.tolerance} blocks.")
+                    new_protein = await self.get_protein_from_epoch_start(current_block)
+                    if new_protein and new_protein != self.last_challenge_protein:
+                        self.current_challenge_protein = new_protein
+                        self.last_challenge_protein = new_protein
+                        bt.logging.info(f"New protein: {new_protein}")
 
                     # If old task still running, set shutdown event
                     if self.inference_task:
