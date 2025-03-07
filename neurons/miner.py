@@ -238,7 +238,6 @@ class Miner:
         # Startup case: In case we start mid-epoch get most recent protein and start inference
         current_block = await self.subtensor.get_current_block()
         last_boundary = (current_block // self.epoch_length) * self.epoch_length
-        bt.logging.warning(f"Last boundary: {last_boundary}")
         start_protein = await self.get_protein_from_epoch_start(last_boundary)
         if start_protein:
             self.current_challenge_protein = start_protein
