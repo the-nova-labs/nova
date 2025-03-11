@@ -3,6 +3,7 @@ import math
 import os
 import sys
 import argparse
+import binascii
 from typing import cast
 from types import SimpleNamespace
 import bittensor as bt
@@ -95,10 +96,6 @@ async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int) ->
         dict: A mapping from hotkey to a SimpleNamespace containing uid, hotkey,
               block, and decoded commitment data.
     """
-    # Use the provided netuid to fetch the corresponding metagraph.
-    #metagraph = await subtensor.metagraph(netuid)
-    # Determine the block hash if a block is specified.
-    #block_hash = await subtensor.determine_block_hash(block) if block is not None else None
 
     # Gather commitment queries for all validators (hotkeys) concurrently.
     commits = await asyncio.gather(*[
@@ -123,6 +120,65 @@ async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int) ->
             )
     return result
 
+async def remove_duplicate_submissions(subtensor, epoch_metagraph, last_epoch_block: int, current_block: int) -> dict:
+    """
+    Check for duplicate submissions in blocks and return the first occurrence of each submission.
+    
+    Args:
+        subtensor: The subtensor client object
+        epoch_metagraph: Metagraph for the epoch being analyzed
+        last_epoch_block: Starting block number to check
+        current_block: Ending block number to check
+        
+    Returns:
+        dict: Mapping of valid submissions to their block/index information
+    """
+    bt.logging.info(f"Removing duplicate submissions from blocks {last_epoch_block} to {current_block}")
+    
+    valid_submissions = {}
+    duplicated_hotkey_answers = set()
+    
+    # Get order of extrinsics in the block
+    for b in range(last_epoch_block, current_block):
+        seen = {}
+        block_hash = await subtensor.determine_block_hash(b)
+        evts = await subtensor.substrate.get_events(block_hash=block_hash)
+        failed_exts = {e['extrinsic_idx'] for e in evts if e['event']['event_id'] == 'ExtrinsicFailed'}
+        exts = await subtensor.substrate.get_extrinsics(block_hash=block_hash)
+        
+        for idx, ext in enumerate(exts):
+            if (idx in failed_exts) or (ext.value["call"]["call_function"] != 'set_commitment'):
+                continue
+            args = {a['name']:a['value'] for a in ext.value["call"]["call_args"]}
+            if args['netuid'] != config.netuid:
+                continue
+                
+            raw = list(args['info']['fields'][0].values())[0]
+            decoded_subm = str(binascii.unhexlify(raw[2:]), 'ASCII')
+            
+            if len(decoded_subm) < 10:
+                # challenge, not submission
+                continue
+                
+            hk = ext.value['address']
+            uid = epoch_metagraph.hotkeys.index(hk) if hk in epoch_metagraph.hotkeys else -1
+            
+            if (decoded_subm in seen) or (decoded_subm.lower() in seen) or (decoded_subm.strip() in seen):
+                bt.logging.warning(f'block {b} idx {idx}: {decoded_subm} by UID {uid} was already submitted: {seen[decoded_subm]}')
+                duplicated_hotkey_answers.add(hk)
+                continue
+                
+            seen[decoded_subm] = f'block {b} idx {idx} by UID {uid}'
+            if decoded_subm not in valid_submissions:
+                valid_submissions[decoded_subm] = {
+                    'block': b,
+                    'index': idx,
+                    'hotkey': hk,
+                    'uid': uid
+                }
+    
+    bt.logging.warning(f"Hotkeys that submitted duplicate answers: {duplicated_hotkey_answers}")
+    return valid_submissions
 
 async def main(config):
     """
@@ -177,6 +233,7 @@ async def main(config):
             epoch_metagraph = await subtensor.metagraph(config.netuid, block=block_to_check + tolerance)
             epoch_commitments = await get_commitments(subtensor, epoch_metagraph, block_hash_to_check, netuid=config.netuid)
             epoch_commitments = {k: v for k, v in epoch_commitments.items() if current_block - v.block <= (config.epoch_length + tolerance)}
+            
             high_stake_protein_commitment = max(
                 epoch_commitments.values(),
                 key=lambda commit: epoch_metagraph.S[commit.uid],
@@ -208,6 +265,22 @@ async def main(config):
             # Retrieve the latest commitments (current epoch).
             current_block_hash = await subtensor.determine_block_hash(current_block)
             current_commitments = await get_commitments(subtensor, metagraph, current_block_hash, netuid=config.netuid)
+            bt.logging.debug(f"Current commitments: {len(list(current_commitments.values()))}")
+
+            # Check for duplicate submissions and get valid ones
+            valid_submissions = await remove_duplicate_submissions(
+                subtensor,
+                metagraph,
+                prev_epoch,
+                current_block
+            )
+            
+            # Filter commitments based on valid submissions
+            current_commitments = {
+                k: v for k, v in current_commitments.items() 
+                if v.data in valid_submissions and valid_submissions[v.data]['hotkey'] == k
+            }
+            bt.logging.debug(f"Current commitments after removing duplicates: {len(list(current_commitments.values()))}")
 
             # Identify the best molecule based on the scoring function.
             best_score = -math.inf
