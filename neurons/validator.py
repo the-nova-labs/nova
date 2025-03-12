@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
-from my_utils import get_smiles, get_random_protein, get_sequence_from_protein_code
+from my_utils import get_smiles, get_index_in_range_from_blockhash, get_protein_code_at_index, get_sequence_from_protein_code
 from PSICHIC.wrapper import PsichicWrapper
 from bittensor.core.chain_data.utils import decode_metadata
 
@@ -214,17 +214,21 @@ async def main(config):
         if current_block % config.epoch_length == 0:
 
             try:
-                # Set the next commitment target protein.
-                protein = get_random_protein()
+                block_hash_to_check = await subtensor.determine_block_hash(current_block)
+
+                random_index = get_index_in_range_from_blockhash(block_hash_to_check, 180_000)
+
+                protein_code = get_protein_code_at_index(random_index)
+
                 await subtensor.set_commitment(
                     wallet=wallet,
                     netuid=config.netuid,
-                    data=protein
+                    data=protein_code
                 )
-                bt.logging.info(f'Commited successfully: {protein}')
-            except Exception as e:
-                bt.logging.error(f'Error: {e}')
+                bt.logging.info(f"Committed successfully: {protein_code}")
 
+            except Exception as e:
+                bt.logging.error(f"Error: {e}")
             # Retrieve commitments from the previous epoch.
             prev_epoch = current_block - config.epoch_length
             best_stake = -math.inf

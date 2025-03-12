@@ -62,7 +62,7 @@ def get_sequence_from_protein_code(protein_code:str) -> str:
         amino_acid_sequence = ''.join(sequence_lines)
         return amino_acid_sequence
 
-def get_random_in_range_from_blockhash(block_hash: str, range_max: int) -> int:
+def get_index_in_range_from_blockhash(block_hash: str, range_max: int) -> int:
 
     block_hash_str = block_hash.lower().removeprefix('0x')
     
