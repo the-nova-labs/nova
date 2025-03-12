@@ -3,6 +3,9 @@ import os
 import json
 from dotenv import load_dotenv
 import bittensor as bt
+from datasets import load_dataset
+
+import asyncio
 
 #load_dotenv(override=True)
 
@@ -58,3 +61,21 @@ def get_sequence_from_protein_code(protein_code:str) -> str:
         sequence_lines = [line.strip() for line in lines if not line.startswith('>')]
         amino_acid_sequence = ''.join(sequence_lines)
         return amino_acid_sequence
+
+def get_random_in_range_from_blockhash(block_hash: str, range_max: int) -> int:
+
+    block_hash_str = block_hash.lower().removeprefix('0x')
+    
+    # Convert the hex string to an integer
+    hash_int = int(block_hash_str, 16)
+
+    # Modulo by the desired range
+    random_index = hash_int % range_max
+
+    return random_index
+
+def get_protein_code_at_index(index: int) -> str:
+    
+    dataset = load_dataset("Metanova/Proteins", split="train")
+    row = dataset[index]  # 0-based indexing
+    return row["Entry"]
