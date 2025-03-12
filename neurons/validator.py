@@ -159,12 +159,14 @@ async def remove_duplicate_submissions(subtensor, epoch_metagraph, last_epoch_bl
             if len(decoded_subm) < 10:
                 # challenge, not submission
                 continue
-                
+
             hk = ext.value['address']
             uid = epoch_metagraph.hotkeys.index(hk) if hk in epoch_metagraph.hotkeys else -1
             
-            if (decoded_subm in seen) or (decoded_subm.lower() in seen) or (decoded_subm.strip() in seen):
-                bt.logging.warning(f'block {b} idx {idx}: {decoded_subm} by UID {uid} was already submitted: {seen[decoded_subm]}')
+            # Normalize the submission for comparison
+            decoded_subm_norm = decoded_subm.lower().strip()
+            if decoded_subm_norm in {k.lower().strip() for k in seen.keys()}:
+                bt.logging.warning(f'block {b} idx {idx}: {decoded_subm} by UID {uid} was already submitted: {seen[next(k for k in seen.keys() if k.lower().strip() == decoded_subm_norm)]}')
                 duplicated_hotkey_answers.add(hk)
                 continue
                 
