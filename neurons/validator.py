@@ -65,6 +65,21 @@ def run_model(protein: str, molecule: str) -> float:
     a predicted binding score. Returns 0.0 if SMILES not found or if
     there's any issue with scoring.
     """
+
+    # Initialize PSICHIC for new protein
+    bt.logging.info(f'Initializing model for protein sequence: {protein}')
+    try:
+        psichic.run_challenge_start(protein)
+        bt.logging.info('Model initialized successfully.')
+    except Exception as e:
+        try:
+            os.system(f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/PDBv2020_PSICHIC/model.pt')} https://huggingface.co/Metanova/PSICHIC/resolve/main/model.pt")
+            psichic.run_challenge_start(protein)
+            bt.logging.info('Model initialized successfully.')
+        except Exception as e:
+            bt.logging.error(f'Error initializing model: {e}')
+
+
     smiles = get_smiles(molecule)
     if not smiles:
         bt.logging.debug(f"Could not retrieve SMILES for '{molecule}', returning score of 0.0.")
@@ -81,6 +96,14 @@ def run_model(protein: str, molecule: str) -> float:
         return 0.0
 
     return float(predicted_score)
+
+def run_model_difference(target_sequence: str, antitarget_sequence: str, molecule: str) -> float:
+    """
+    Compute final_score = binding_affinity(target) - binding_affinity(anti-target)
+    """
+    s_target = run_model(protein=target_sequence, molecule=molecule)
+    s_anti   = run_model(protein=antitarget_sequence, molecule=molecule)
+    return s_target - s_anti
 
 
 async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int) -> dict:
@@ -214,18 +237,21 @@ async def main(config):
         if current_block % config.epoch_length == 0:
 
             try:
-                block_hash_to_check = await subtensor.determine_block_hash(current_block)
+                current_block_hash = await subtensor.determine_block_hash(current_block)
+                prev_block_hash = await subtensor.determine_block_hash(current_block - 1)
 
-                random_index = get_index_in_range_from_blockhash(block_hash_to_check, 179620)
+                target_random_index = get_index_in_range_from_blockhash(current_block_hash, 179620)
+                antitarget_random_index = get_index_in_range_from_blockhash(prev_block_hash, 179620)
 
-                protein_code = get_protein_code_at_index(random_index)
+                target_protein_code = get_protein_code_at_index(target_random_index)
+                antitarget_protein_code = get_protein_code_at_index(antitarget_random_index)
 
                 await subtensor.set_commitment(
                     wallet=wallet,
                     netuid=config.netuid,
-                    data=protein_code
+                    data=f"{target_protein_code}|{antitarget_protein_code}"
                 )
-                bt.logging.info(f"Committed successfully: {protein_code}")
+                bt.logging.info(f"Committed successfully target: {target_protein_code}, antitarget: {antitarget_protein_code}")
 
             except Exception as e:
                 bt.logging.error(f"Error: {e}")
@@ -250,23 +276,13 @@ async def main(config):
                 current_protein = None
                 continue
 
-            current_protein = high_stake_protein_commitment.data
-            bt.logging.info(f"Current protein: {current_protein}")
+            protein_codes = high_stake_protein_commitment.data.split('|')
+            target_protein_code = protein_codes[0]
+            antitarget_protein_code = protein_codes[1]
+            bt.logging.info(f"Current target protein: {target_protein_code}, antitarget: {antitarget_protein_code}")
 
-            protein_sequence = get_sequence_from_protein_code(current_protein)
-
-            # Initialize PSICHIC for new protein
-            bt.logging.info(f'Initializing model for protein sequence: {protein_sequence}')
-            try:
-                psichic.run_challenge_start(protein_sequence)
-                bt.logging.info('Model initialized successfully.')
-            except Exception as e:
-                try:
-                    os.system(f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/PDBv2020_PSICHIC/model.pt')} https://huggingface.co/Metanova/PSICHIC/resolve/main/model.pt")
-                    psichic.run_challenge_start(protein_sequence)
-                    bt.logging.info('Model initialized successfully.')
-                except Exception as e:
-                    bt.logging.error(f'Error initializing model: {e}')
+            target_protein_sequence = get_sequence_from_protein_code(target_protein_code)
+            antitarget_protein_sequence = get_sequence_from_protein_code(antitarget_protein_code)
 
             # Retrieve the latest commitments (current epoch).
             current_block_hash = await subtensor.determine_block_hash(current_block)
@@ -296,7 +312,7 @@ async def main(config):
                 if current_block - commit.block <= config.epoch_length:
                     total_commits += 1
                     # Assuming that 'commit.data' contains the necessary molecule data; adjust if needed.
-                    score = run_model(protein=current_protein, molecule=commit.data)
+                    score = run_model_difference(target_protein_sequence, antitarget_protein_sequence, commit.data)
                     # If the score is higher, or equal but the block is earlier, update the best.
                     if (score > best_score) or (score == best_score and best_molecule is not None and commit.block < best_molecule.block):
                         best_score = score
