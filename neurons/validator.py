@@ -216,7 +216,7 @@ async def main(config):
             try:
                 block_hash_to_check = await subtensor.determine_block_hash(current_block)
 
-                random_index = get_index_in_range_from_blockhash(block_hash_to_check, 180_000)
+                random_index = get_index_in_range_from_blockhash(block_hash_to_check, 179620)
 
                 protein_code = get_protein_code_at_index(random_index)
 
