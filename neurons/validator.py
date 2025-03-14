@@ -291,7 +291,7 @@ async def main(config):
                     except Exception as e:
                         bt.logging.error(f"Decrypted submission for {commit.uid} not found: {e}")
                         continue
-                    score = run_model_difference(target_protein_sequence, antitarget_protein_sequence, commit.data)
+                    score = run_model_difference(target_protein_sequence, antitarget_protein_sequence, molecule)
                     score = round(score, 3)
                     # If the score is higher, or equal but the block is earlier, update the best.
                     if (score > best_score) or (score == best_score and best_molecule is not None and commit.block < best_molecule.block):
