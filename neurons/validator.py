@@ -1,4 +1,5 @@
 import asyncio
+from ast import literal_eval
 import math
 import os
 import sys
@@ -10,15 +11,17 @@ import bittensor as bt
 from substrateinterface import SubstrateInterface
 import requests
 from dotenv import load_dotenv
+from bittensor.core.chain_data.utils import decode_metadata
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
 from my_utils import get_smiles, get_index_in_range_from_blockhash, get_protein_code_at_index, get_sequence_from_protein_code
 from PSICHIC.wrapper import PsichicWrapper
-from bittensor.core.chain_data.utils import decode_metadata
+from btdr import QuicknetBittensorDrandTimelock
 
 psichic = PsichicWrapper()
+btd = QuicknetBittensorDrandTimelock()
 
 def get_config():
     """
@@ -142,68 +145,51 @@ async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int) ->
                 data=decode_metadata(commit)
             )
     return result
-
-async def remove_duplicate_submissions(subtensor, epoch_metagraph, last_epoch_block: int, current_block: int) -> dict:
+def decrypt_submissions(current_commitments: dict, headers: dict = {"Range": "bytes=0-1024"}) -> dict:
     """
-    Check for duplicate submissions in blocks and return the first occurrence of each submission.
-    
+    Decrypts submissions from validators by fetching encrypted content from GitHub URLs and decrypting them.
+
     Args:
-        subtensor: The subtensor client object
-        epoch_metagraph: Metagraph for the epoch being analyzed
-        last_epoch_block: Starting block number to check
-        current_block: Ending block number to check
-        
+        current_commitments (dict): A dictionary of miner commitments where each value contains:
+            - uid: Miner's unique identifier
+            - data: GitHub URL path containing the encrypted submission
+            - Other commitment metadata
+        headers (dict, optional): HTTP request headers for fetching content. 
+            Defaults to {"Range": "bytes=0-2048"} to limit response size.
+
     Returns:
-        dict: Mapping of valid submissions to their block/index information
+        dict: A dictionary of decrypted submissions mapped by validator UIDs.
+            Empty if no valid submissions were found or decryption failed.
+
+    Note:
+        - Only processes commitments where data contains a '/' (indicating a GitHub URL)
+        - Uses btd.decrypt_dict for decryption of the fetched submissions
+        - Logs errors for failed HTTP requests and submission counts
     """
-    bt.logging.info(f"Removing duplicate submissions from blocks {last_epoch_block} to {current_block}")
-    
-    valid_submissions = {}
-    duplicated_hotkey_answers = set()
-    
-    # Get order of extrinsics in the block
-    for b in range(last_epoch_block, current_block):
-        seen = {}
-        block_hash = await subtensor.determine_block_hash(b)
-        evts = await subtensor.substrate.get_events(block_hash=block_hash)
-        failed_exts = {e['extrinsic_idx'] for e in evts if e['event']['event_id'] == 'ExtrinsicFailed'}
-        exts = await subtensor.substrate.get_extrinsics(block_hash=block_hash)
-        
-        for idx, ext in enumerate(exts):
-            if (idx in failed_exts) or (ext.value["call"]["call_function"] != 'set_commitment'):
-                continue
-            args = {a['name']:a['value'] for a in ext.value["call"]["call_args"]}
-            if args['netuid'] != config.netuid:
-                continue
-                
-            raw = list(args['info']['fields'][0].values())[0]
-            decoded_subm = str(binascii.unhexlify(raw[2:]), 'ASCII')
-            
-            if len(decoded_subm) < 10:
-                # challenge, not submission
+    encrypted_submissions = {}
+    for commit in current_commitments.values():
+        if '/' in commit.data: # Filter only url submissions
+            full_url = f"https://raw.githubusercontent.com/{commit.data}"
+            response = requests.get(full_url, headers=headers)
+            if response.status_code in [200, 206]:
+                encrypted_content = response.content
+                encrypted_content = encrypted_content.decode('utf-8', errors='replace')
+                encrypted_content = literal_eval(encrypted_content)
+                if type(encrypted_content) != tuple:
+                    bt.logging.error(f"Encrypted content for {commit.uid} is not a tuple: {encrypted_content}")
+                    continue
+                encrypted_submissions[commit.uid] = (encrypted_content[0], encrypted_content[1])
+            else:
+                bt.logging.error(f"Error fetching encrypted submission: {response.status_code}")
                 continue
 
-            hk = ext.value['address']
-            uid = epoch_metagraph.hotkeys.index(hk) if hk in epoch_metagraph.hotkeys else -1
-            
-            # Normalize the submission for comparison
-            decoded_subm_norm = decoded_subm.lower().strip()
-            if decoded_subm_norm in {k.lower().strip() for k in seen.keys()}:
-                bt.logging.warning(f'block {b} idx {idx}: {decoded_subm} by UID {uid} was already submitted: {seen[next(k for k in seen.keys() if k.lower().strip() == decoded_subm_norm)]}')
-                duplicated_hotkey_answers.add(hk)
-                continue
-                
-            seen[decoded_subm] = f'block {b} idx {idx} by UID {uid}'
-            if decoded_subm not in valid_submissions:
-                valid_submissions[decoded_subm] = {
-                    'block': b,
-                    'index': idx,
-                    'hotkey': hk,
-                    'uid': uid
-                }
+    bt.logging.info(f"Encrypted submissions: {len(encrypted_submissions)}")
     
-    bt.logging.warning(f"Hotkeys that submitted duplicate answers: {duplicated_hotkey_answers}")
-    return valid_submissions
+    decrypted_submissions = btd.decrypt_dict(encrypted_submissions)
+    bt.logging.info(f"Decrypted submissions: {len(decrypted_submissions)}")
+            
+    return decrypted_submissions
+
 
 async def main(config):
     """
@@ -289,20 +275,8 @@ async def main(config):
             current_commitments = await get_commitments(subtensor, metagraph, current_block_hash, netuid=config.netuid)
             bt.logging.debug(f"Current commitments: {len(list(current_commitments.values()))}")
 
-            # Check for duplicate submissions and get valid ones
-            valid_submissions = await remove_duplicate_submissions(
-                subtensor,
-                metagraph,
-                prev_epoch,
-                current_block
-            )
-            
-            # Filter commitments based on valid submissions
-            current_commitments = {
-                k: v for k, v in current_commitments.items() 
-                if v.data in valid_submissions and valid_submissions[v.data]['hotkey'] == k
-            }
-            bt.logging.debug(f"Current commitments after removing duplicates: {len(list(current_commitments.values()))}")
+             # Decrypt submissions
+            decrypted_submissions = decrypt_submissions(current_commitments)
 
             # Identify the best molecule based on the scoring function.
             best_score = -math.inf
@@ -310,9 +284,15 @@ async def main(config):
             best_molecule = None
             for hotkey, commit in current_commitments.items():
                 if current_block - commit.block <= config.epoch_length:
-                    total_commits += 1
-                    # Assuming that 'commit.data' contains the necessary molecule data; adjust if needed.
+                    # Find the decrypted submission for the current commitment
+                    try:    
+                        molecule = decrypted_submissions[commit.uid]
+                        total_commits += 1
+                    except Exception as e:
+                        bt.logging.error(f"Decrypted submission for {commit.uid} not found: {e}")
+                        continue
                     score = run_model_difference(target_protein_sequence, antitarget_protein_sequence, commit.data)
+                    score = round(score, 3)
                     # If the score is higher, or equal but the block is earlier, update the best.
                     if (score > best_score) or (score == best_score and best_molecule is not None and commit.block < best_molecule.block):
                         best_score = score

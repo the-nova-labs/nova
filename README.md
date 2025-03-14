@@ -22,24 +22,31 @@ git clone <repository-url>
 cd nova
 ```
 
-2. Prepare your .env file:
+2. Prepare your .env file as in example.env:
 ```
-VALIDATOR_API_KEY=<your_api_key> # validators only
+# General configs
+SUBTENSOR_NETWORK="ws://localhost:9944" # or your chosen node
+DEVICE_OVERRIDE="cpu" # None to run on GPU
 
-# For validators, we highly recommend running a local node!
-SUBTENSOR_NETWORK="wss://archive.chain.opentensor.ai:443 
+# Github configs - FOR MINERS
+GITHUB_REPO_NAME="repo-name"
+GITHUB_REPO_BRANCH="repo-branch"
+GITHUB_TOKEN="your_token"
+GITHUB_REPO_OWNER="repo-owner"
+GITHUB_REPO_PATH="" # path within repo or ""
 
-DEVICE_OVERRIDE="cpu" #or none to run on GPU
+# For validators
+VALIDATOR_API_KEY="your_api_key"
 ```
 
 3. Install dependencies:
    - For CPU:
    ```bash
-   bash install_deps_cpu.sh
+   ./install_deps_cpu.sh
    ```
    - For CUDA 12.4:
    ```bash
-   bash install_deps_cu124.sh
+   ./install_deps_cu124.sh
    ```
 
 4. Run:
@@ -49,7 +56,7 @@ source .venv/bin/activate
 
 # Run your script:
 # miner:
-python3 neurons/miner.py --wallet.name <your_wallet> --wallet.hotkey <your_hotkey> --logging.debug
+python3 neurons/miner.py --wallet.name <your_wallet> --wallet.hotkey <your_hotkey> --logging.info
 
 # validator:
 python3 neurons/validator.py --wallet.name <your_wallet> --wallet.hotkey <your_hotkey> --logging.debug
