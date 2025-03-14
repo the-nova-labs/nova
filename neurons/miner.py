@@ -10,6 +10,7 @@ from typing import cast
 from types import SimpleNamespace
 import sys
 from dotenv import load_dotenv
+import hashlib
 
 import bittensor as bt
 from bittensor.core.chain_data.utils import decode_metadata
@@ -46,8 +47,8 @@ class Miner:
         else:
             self.github_path = f"{self.github_repo_owner}/{self.github_repo_name}/{self.github_repo_branch}/{self.github_repo_path}"
 
-        if len(self.github_path) > 103:
-            raise ValueError("Github path is too long. Please shorten it to 103 characters or less.")
+        if len(self.github_path) > 100:
+            raise ValueError("Github path is too long. Please shorten it to 100 characters or less.")
             sys.exit(1)
 
         self.config = self.get_config()
@@ -324,9 +325,10 @@ class Miner:
 
             # 3) Base64-encode it
             encoded_content = base64.b64encode(content_str.encode()).decode()
+            filename = hashlib.sha256(content_str.encode()).hexdigest()[:20]
 
             # 4) Format chain commitment content
-            commit_content = f"{self.github_path}/{self.current_challenge_target}_{self.current_challenge_antitarget}.txt"
+            commit_content = f"{self.github_path}/{filename}.txt"
 
             # 5) Set commitment. If successful, send to GitHub
             try:
