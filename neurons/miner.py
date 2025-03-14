@@ -46,8 +46,8 @@ class Miner:
         else:
             self.github_path = f"{self.github_repo_owner}/{self.github_repo_name}/{self.github_repo_branch}/{self.github_repo_path}"
 
-        if len(self.github_path) > 114:
-            raise ValueError("Github path is too long. Please shorten it to 114 characters or less.")
+        if len(self.github_path) > 103:
+            raise ValueError("Github path is too long. Please shorten it to 103 characters or less.")
             sys.exit(1)
 
         self.config = self.get_config()
@@ -55,20 +55,22 @@ class Miner:
         self.epoch_length = node.query("SubtensorModule", "Tempo", [self.config.netuid]).value
         self.setup_logging()
         self.current_block = 0
-        self.current_challenge_protein = None
-        self.last_challenge_protein = None
-        self.psichic_wrapper = PsichicWrapper()
+        self.current_challenge_target = None
+        self.last_challenge_target = None
+        self.current_challenge_antitarget = None
+        self.last_challenge_antitarget = None
+        self.psichic_target = PsichicWrapper()
+        self.psichic_antitarget = PsichicWrapper()
         self.candidate_product = None
         self.candidate_product_score = 0
         self.best_score = 0
         self.last_submitted_product = None
         self.last_submission_time = None
         self.submission_interval = 1200
-
-        self.shared_lock = asyncio.Lock()
         self.inference_task = None
         self.shutdown_event = asyncio.Event()
         self.bdt = QuicknetBittensorDrandTimelock()
+
 
     def get_config(self):
         # Set up the configuration parser.
@@ -210,12 +212,23 @@ class Miner:
             bt.logging.info(f"No commits found in block window [{epoch_start}, {final_block}].")
             return None
 
-        highest_stake_commit = max(
-            fresh_commits.values(),
-            key=lambda c: self.metagraph.S[c.uid],
-            default=None
-        )
-        return highest_stake_commit.data if highest_stake_commit else None
+        # highest_stake_commit = max(
+        #     fresh_commits.values(),
+        #     key=lambda c: self.metagraph.S[c.uid],
+        #     default=None
+        # )
+
+        highest_stake_commit = [v for v in fresh_commits.values() if '|' in v.data]
+        if len(highest_stake_commit) > 0:
+            highest_stake_commit = highest_stake_commit[0]
+        else:
+            return None, None
+
+        proteins = highest_stake_commit.data.split('|')
+        target_protein = proteins[0]
+        antitarget_protein = proteins[1]
+
+        return (target_protein, antitarget_protein) if highest_stake_commit else (None, None)
 
     async def run_psichic_model_loop(self):
         """
@@ -229,7 +242,7 @@ class Miner:
         The method:
         1. Streams data in chunks from the dataset
         2. Cleans the product names and SMILES strings
-        3. Runs PSICHIC predictions on each chunk
+        3. Runs PSICHIC predictions on each chunk for both target and antitarget proteins
         4. Updates the best candidate if a higher score is found
         5. Continues until shutdown_event is set
 
@@ -244,26 +257,32 @@ class Miner:
                     df['product_name'] = df['product_name'].apply(lambda x: x.replace('"', ''))
                     df['product_smiles'] = df['product_smiles'].apply(lambda x: x.replace('"', ''))
 
-                    # Run the PSICHIC model on the chunk.
+                    # Run the PSICHIC model for target and antitarget proteins on the chunk.
                     bt.logging.debug(f'Running inference...')
-                    chunk_psichic_scores = self.psichic_wrapper.run_validation(df['product_smiles'].tolist())
-                    chunk_psichic_scores = chunk_psichic_scores.sort_values(by=self.psichic_result_column_name, ascending=False).reset_index(drop=True)
+                    psichic_scores_target = self.psichic_target.run_validation(df['product_smiles'].tolist())
+                    psichic_scores_antitarget = self.psichic_antitarget.run_validation(df['product_smiles'].tolist())
 
-                    if chunk_psichic_scores[self.psichic_result_column_name].iloc[0] > self.best_score:
-                        async with self.shared_lock:
-                            candidate_molecule = chunk_psichic_scores['Ligand'].iloc[0]
-                            self.best_score = chunk_psichic_scores[self.psichic_result_column_name].iloc[0]
-                            self.candidate_product = df.loc[df['product_smiles'] == candidate_molecule, 'product_name'].iloc[0]
-                            bt.logging.info(f"New best score: {self.best_score}, New candidate product: {self.candidate_product}")
-                            
-                            if not self.last_submission_time or (datetime.datetime.now() - self.last_submission_time).total_seconds() > self.submission_interval:
-                                if self.candidate_product != self.last_submitted_product:
-                                    current_product_to_submit = self.candidate_product
-                                    current_product_score = self.best_score
-                                    try:
-                                        await self.submit_response()
-                                    except Exception as e:
-                                        bt.logging.error(e)
+                    # Merge the scores for target and antitarget proteins
+                    psichic_scores_target.rename(columns={self.psichic_result_column_name: "target_affinity"}, inplace=True)
+                    psichic_scores_target['antitarget_affinity'] = psichic_scores_antitarget[self.psichic_result_column_name]
+                    psichic_scores_target['affinity_difference'] = psichic_scores_target['target_affinity'] - psichic_scores_target['antitarget_affinity']
+
+                    psichic_scores_target = psichic_scores_target.sort_values(by='affinity_difference', ascending=False).reset_index(drop=True)
+
+                    if psichic_scores_target['affinity_difference'].iloc[0] > self.best_score:
+                        candidate_molecule = psichic_scores_target['Ligand'].iloc[0]
+                        self.best_score = psichic_scores_target['affinity_difference'].iloc[0]
+                        self.candidate_product = df.loc[df['product_smiles'] == candidate_molecule, 'product_name'].iloc[0]
+                        bt.logging.info(f"New best score: {self.best_score}, New candidate product: {self.candidate_product}")
+
+                        if not self.last_submission_time or (datetime.datetime.now() - self.last_submission_time).total_seconds() > self.submission_interval:
+                            if self.candidate_product != self.last_submitted_product:
+                                current_product_to_submit = self.candidate_product
+                                current_product_score = self.best_score
+                                try:
+                                    await self.submit_response()
+                                except Exception as e:
+                                    bt.logging.error(e)
 
                         await asyncio.sleep(1)
                     await asyncio.sleep(1)
@@ -284,7 +303,7 @@ class Miner:
         5. Uploads the encrypted response to GitHub
         
         The GitHub upload path follows the format - MUST BE BELOW 128 CHARACTERS:
-        {github_repo_owner}/{github_repo_name}/{github_repo_branch}/{current_challenge_protein}.txt
+        {github_repo_owner}/{github_repo_name}/{github_repo_branch}/{current_challenge_target}_{current_challenge_antitarget}.txt
         
         Raises:
             Exception: If setting the commitment or uploading to GitHub fails
@@ -313,7 +332,7 @@ class Miner:
             encoded_content = base64.b64encode(content_str.encode()).decode()
 
             # 4) Format chain commitment content
-            commit_content = f"{self.github_path}/{self.current_challenge_protein}.txt"
+            commit_content = f"{self.github_path}/{self.current_challenge_target}_{self.current_challenge_antitarget}.txt"
 
             # 5) Set commitment. If successful, send to GitHub
             try:
@@ -326,22 +345,22 @@ class Miner:
                 bt.logging.info(f'Too soon to commit again, will keep looking for better candidates.')
                 return
             except Exception as e:
-                bt.logging.error(f"Failed to set commitment for {self.current_challenge_protein}: {e}")
+                bt.logging.error(f"Failed to set commitment for {self.current_challenge_target}_{self.current_challenge_antitarget}: {e}")
                 return
 
             if commitment_status:
                 try:
-                    bt.logging.info(f"Commitment set successfully for {self.current_challenge_protein}")
+                    bt.logging.info(f"Commitment set successfully for {self.current_challenge_target}_{self.current_challenge_antitarget}")
 
-                    github_status = upload_file_to_github(self.current_challenge_protein, encoded_content)
+                    github_status = upload_file_to_github(self.current_challenge_target, self.current_challenge_antitarget, encoded_content)
                     if github_status:
-                        bt.logging.info(f"File uploaded successfully for {self.current_challenge_protein}")
+                        bt.logging.info(f"File uploaded successfully for {self.current_challenge_target}_{self.current_challenge_antitarget}")
                         self.last_submitted_product = self.candidate_product
                         self.last_submission_time = datetime.datetime.now()
                     else:
-                        bt.logging.error(f"Failed to upload file for {self.current_challenge_protein}")
+                        bt.logging.error(f"Failed to upload file for {self.current_challenge_target}_{self.current_challenge_antitarget}")
                 except Exception as e:
-                    bt.logging.error(f"Failed to upload file for {self.current_challenge_protein}: {e}")
+                    bt.logging.error(f"Failed to upload file for {self.current_challenge_target}_{self.current_challenge_antitarget}: {e}")
             return
 
     async def run(self):
@@ -352,16 +371,26 @@ class Miner:
         # Startup case: In case we start mid-epoch get most recent protein and start inference
         current_block = await self.subtensor.get_current_block()
         last_boundary = (current_block // self.epoch_length) * self.epoch_length
-        start_protein = await self.get_protein_from_epoch_start(last_boundary)
-        if start_protein:
-            self.current_challenge_protein = start_protein
-            self.last_challenge_protein = start_protein
-            bt.logging.info(f"Startup protein: {start_protein}")
+        start_target, start_antitarget = await self.get_protein_from_epoch_start(last_boundary)
+        if start_target and start_antitarget:
 
-            protein_sequence = get_sequence_from_protein_code(start_protein)
+            self.current_challenge_target = start_target
+            self.last_challenge_target = start_target
+
+            self.current_challenge_antitarget = start_antitarget
+            self.last_challenge_antitarget = start_antitarget
+
+            bt.logging.info(f"Startup target: {start_target}, antitarget: {start_antitarget}")
+
+            protein_sequence_target = get_sequence_from_protein_code(start_target)
+            protein_sequence_antitarget = get_sequence_from_protein_code(start_antitarget)
+
             try:
-                self.psichic_wrapper.run_challenge_start(protein_sequence)
-                bt.logging.info(f"Initialized model for {protein_sequence}")
+                self.psichic_target.run_challenge_start(protein_sequence_target)
+                bt.logging.info(f"Initialized model for {protein_sequence_target}")
+
+                self.psichic_antitarget.run_challenge_start(protein_sequence_antitarget)
+                bt.logging.info(f"Initialized model for {protein_sequence_antitarget}")
             except Exception as e:
                 bt.logging.error(f"Error initializing model: {e}")
 
@@ -378,11 +407,14 @@ class Miner:
                 # If we are at the epoch boundary, wait for the tolerance blocks to find a new protein
                 if current_block % self.epoch_length == 0:
                     bt.logging.info(f"Epoch boundary at block {current_block}, waiting {self.tolerance} blocks.")
-                    new_protein = await self.get_protein_from_epoch_start(current_block)
-                    if new_protein and new_protein != self.last_challenge_protein:
-                        self.current_challenge_protein = new_protein
-                        self.last_challenge_protein = new_protein
-                        bt.logging.info(f"New protein: {new_protein}")
+                    new_target, new_antitarget = await self.get_protein_from_epoch_start(current_block)
+                    if (new_target and new_antitarget) and (new_target != self.last_challenge_target or new_antitarget != self.last_challenge_antitarget):
+                        self.current_challenge_target = new_target
+                        self.last_challenge_target = new_target
+
+                        self.current_challenge_antitarget = new_antitarget
+                        self.last_challenge_antitarget = new_antitarget
+                        bt.logging.info(f"New proteins: {new_target}, {new_antitarget}")
 
                     # If old task still running, set shutdown event
                     if self.inference_task:
@@ -398,18 +430,26 @@ class Miner:
                             self.shutdown_event = asyncio.Event()
 
                     # Get protein sequence from uniprot
-                    protein_sequence = get_sequence_from_protein_code(self.current_challenge_protein)
+                    protein_sequence_target = get_sequence_from_protein_code(self.current_challenge_target)
+                    protein_sequence_antitarget = get_sequence_from_protein_code(self.current_challenge_antitarget)
 
                     # Initialize PSICHIC for new protein
-                    bt.logging.info(f'Initializing model for protein sequence: {protein_sequence}')
                     try:
-                        self.psichic_wrapper.run_challenge_start(protein_sequence)
-                        bt.logging.info('Model initialized successfully.')
+                        bt.logging.info(f'Initializing model for protein sequence: {protein_sequence_target}')
+                        self.psichic_target.run_challenge_start(protein_sequence_target)
+                        bt.logging.info('Model initialized successfully for target protein.')
+
+                        bt.logging.info(f'Initializing model for protein sequence: {protein_sequence_antitarget}')
+                        self.psichic_antitarget.run_challenge_start(protein_sequence_antitarget)
+                        bt.logging.info('Model initialized successfully for antitarget protein.')
                     except Exception as e:
                         try:
                             os.system(f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/PDBv2020_PSICHIC/model.pt')} https://huggingface.co/Metanova/PSICHIC/resolve/main/model.pt")
-                            self.psichic_wrapper.run_challenge_start(protein_sequence)
-                            bt.logging.info('Model initialized successfully.')
+                            self.psichic_target.run_challenge_start(protein_sequence_target)
+                            bt.logging.info('Model initialized successfully for target protein.')
+
+                            self.psichic_antitarget.run_challenge_start(protein_sequence_antitarget)
+                            bt.logging.info('Model initialized successfully for antitarget protein.')
                         except Exception as e:
                             bt.logging.error(f'Error initializing model: {e}')
 
