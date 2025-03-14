@@ -63,7 +63,7 @@ class Miner:
         self.psichic_antitarget = PsichicWrapper()
         self.candidate_product = None
         self.candidate_product_score = 0
-        self.best_score = 0
+        self.best_score = -math.inf
         self.last_submitted_product = None
         self.last_submission_time = None
         self.submission_interval = 1200
@@ -212,17 +212,11 @@ class Miner:
             bt.logging.info(f"No commits found in block window [{epoch_start}, {final_block}].")
             return None
 
-        # highest_stake_commit = max(
-        #     fresh_commits.values(),
-        #     key=lambda c: self.metagraph.S[c.uid],
-        #     default=None
-        # )
-
-        highest_stake_commit = [v for v in fresh_commits.values() if '|' in v.data]
-        if len(highest_stake_commit) > 0:
-            highest_stake_commit = highest_stake_commit[0]
-        else:
-            return None, None
+        highest_stake_commit = max(
+            fresh_commits.values(),
+            key=lambda c: self.metagraph.S[c.uid],
+            default=None
+        )
 
         proteins = highest_stake_commit.data.split('|')
         target_protein = proteins[0]
@@ -315,7 +309,7 @@ class Miner:
         """
         # Encrypt the response
         encrypted_response = self.bdt.encrypt(self.miner_uid, self.candidate_product)
-        #bt.logging.info(f"Encrypted response: {encrypted_response}")
+        bt.logging.info(f"Encrypted response: {encrypted_response}")
 
         # Create tmp file with encrypted response
         tmp_file = tempfile.NamedTemporaryFile(delete=True) # change to False to keep file after upload
@@ -485,3 +479,4 @@ class Miner:
 if __name__ == "__main__":
     miner = Miner()
     asyncio.run(miner.run())
+
