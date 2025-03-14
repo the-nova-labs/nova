@@ -1,11 +1,15 @@
+import base64
 import os
 import math
 import random
 import argparse
 import asyncio
+import tempfile
+import datetime
 from typing import cast
 from types import SimpleNamespace
 import sys
+from dotenv import load_dotenv
 
 import bittensor as bt
 from bittensor.core.chain_data.utils import decode_metadata
@@ -18,15 +22,33 @@ import pandas as pd
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
-from my_utils import get_sequence_from_protein_code
+from my_utils import get_sequence_from_protein_code, upload_file_to_github
 from PSICHIC.wrapper import PsichicWrapper
+from btdr import QuicknetBittensorDrandTimelock
 
 class Miner:
     def __init__(self):
+        load_dotenv()
+
         self.hugging_face_dataset_repo = 'Metanova/SAVI-2020'
         self.psichic_result_column_name = 'predicted_binding_affinity'
         self.chunk_size = 128
         self.tolerance = 3
+
+        # Github configs
+        self.github_repo_name = os.environ.get('GITHUB_REPO_NAME')  # example: nova
+        self.github_repo_branch = os.environ.get('GITHUB_REPO_BRANCH') # example: main
+        self.github_repo_owner = os.environ.get('GITHUB_REPO_OWNER') # example: metanova-labs
+        self.github_repo_path = os.environ.get('GITHUB_REPO_PATH') # example: /data/results or ""
+
+        if self.github_repo_path == "":
+            self.github_path = f"{self.github_repo_owner}/{self.github_repo_name}/{self.github_repo_branch}"
+        else:
+            self.github_path = f"{self.github_repo_owner}/{self.github_repo_name}/{self.github_repo_branch}/{self.github_repo_path}"
+
+        if len(self.github_path) > 114:
+            raise ValueError("Github path is too long. Please shorten it to 114 characters or less.")
+            sys.exit(1)
 
         self.config = self.get_config()
         node = SubstrateInterface(url=self.config.network)
@@ -40,15 +62,19 @@ class Miner:
         self.candidate_product_score = 0
         self.best_score = 0
         self.last_submitted_product = None
+        self.last_submission_time = None
+        self.submission_interval = 1200
+
         self.shared_lock = asyncio.Lock()
         self.inference_task = None
         self.shutdown_event = asyncio.Event()
+        self.bdt = QuicknetBittensorDrandTimelock()
 
     def get_config(self):
         # Set up the configuration parser.
         parser = argparse.ArgumentParser()
         # Adds override arguments for network.
-        parser.add_argument('--network', default='wss://archive.chain.opentensor.ai:443', help='Network to use')
+        parser.add_argument('--network', default=os.getenv('SUBTENSOR_NETWORK'), help='Network to use')
         # Adds override arguments for network and netuid.
         parser.add_argument('--netuid', type=int, default=68, help="The chain subnet uid.")
         # Adds subtensor specific arguments.
@@ -103,6 +129,10 @@ class Miner:
             bt.logging.info("Top 5 validators by stake:")
             for uid, stake in sorted_stakes[:5]:
                 bt.logging.info(f"UID: {uid}, Stake: {stake}")
+
+            # Get miner uid
+            self.miner_uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+            bt.logging.info(f"Miner UID: {self.miner_uid}")
 
     async def get_commitments(self, metagraph, block_hash: str) -> dict:
 
@@ -213,22 +243,106 @@ class Miner:
                     df = pd.DataFrame.from_dict(chunk)
                     df['product_name'] = df['product_name'].apply(lambda x: x.replace('"', ''))
                     df['product_smiles'] = df['product_smiles'].apply(lambda x: x.replace('"', ''))
+
                     # Run the PSICHIC model on the chunk.
                     bt.logging.debug(f'Running inference...')
                     chunk_psichic_scores = self.psichic_wrapper.run_validation(df['product_smiles'].tolist())
                     chunk_psichic_scores = chunk_psichic_scores.sort_values(by=self.psichic_result_column_name, ascending=False).reset_index(drop=True)
+
                     if chunk_psichic_scores[self.psichic_result_column_name].iloc[0] > self.best_score:
                         async with self.shared_lock:
                             candidate_molecule = chunk_psichic_scores['Ligand'].iloc[0]
                             self.best_score = chunk_psichic_scores[self.psichic_result_column_name].iloc[0]
                             self.candidate_product = df.loc[df['product_smiles'] == candidate_molecule, 'product_name'].iloc[0]
                             bt.logging.info(f"New best score: {self.best_score}, New candidate product: {self.candidate_product}")
+                            
+                            if not self.last_submission_time or (datetime.datetime.now() - self.last_submission_time).total_seconds() > self.submission_interval:
+                                if self.candidate_product != self.last_submitted_product:
+                                    current_product_to_submit = self.candidate_product
+                                    current_product_score = self.best_score
+                                    try:
+                                        await self.submit_response()
+                                    except Exception as e:
+                                        bt.logging.error(e)
+
                         await asyncio.sleep(1)
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(1)
 
             except Exception as e:
                 bt.logging.error(f"Error running PSICHIC model: {e}")
                 self.shutdown_event.set()
+
+    async def submit_response(self):
+        """
+        Encrypts and submits the current candidate product as a response to the challenge.
+        
+        This method performs the following steps:
+        1. Encrypts the candidate product using the miner's UID
+        2. Creates a temporary file with the encrypted response
+        3. Base64 encodes the content
+        4. Formats and sets a chain commitment
+        5. Uploads the encrypted response to GitHub
+        
+        The GitHub upload path follows the format - MUST BE BELOW 128 CHARACTERS:
+        {github_repo_owner}/{github_repo_name}/{github_repo_branch}/{current_challenge_protein}.txt
+        
+        Raises:
+            Exception: If setting the commitment or uploading to GitHub fails
+        
+        Note:
+            - The method uses a temporary file that is automatically deleted after use
+            - Updates last_submitted_product upon successful submission
+            - Logs success/failure of both commitment setting and GitHub upload
+        """
+        # Encrypt the response
+        encrypted_response = self.bdt.encrypt(self.miner_uid, self.candidate_product)
+        #bt.logging.info(f"Encrypted response: {encrypted_response}")
+
+        # Create tmp file with encrypted response
+        tmp_file = tempfile.NamedTemporaryFile(delete=True) # change to False to keep file after upload
+        with open(tmp_file.name, 'w+') as f:
+            # 1) Write the content
+            f.write(str(encrypted_response))
+            f.flush()  # ensure it's written to disk
+
+            # 2) Read the content back
+            f.seek(0)
+            content_str = f.read()
+
+            # 3) Base64-encode it
+            encoded_content = base64.b64encode(content_str.encode()).decode()
+
+            # 4) Format chain commitment content
+            commit_content = f"{self.github_path}/{self.current_challenge_protein}.txt"
+
+            # 5) Set commitment. If successful, send to GitHub
+            try:
+                commitment_status = await self.subtensor.set_commitment(
+                    wallet=self.wallet,
+                    netuid=self.config.netuid,
+                    data=commit_content
+                    )
+            except MetadataError as e:
+                bt.logging.info(f'Too soon to commit again, will keep looking for better candidates.')
+                return
+            except Exception as e:
+                bt.logging.error(f"Failed to set commitment for {self.current_challenge_protein}: {e}")
+                return
+
+            if commitment_status:
+                try:
+                    bt.logging.info(f"Commitment set successfully for {self.current_challenge_protein}")
+
+                    github_status = upload_file_to_github(self.current_challenge_protein, encoded_content)
+                    if github_status:
+                        bt.logging.info(f"File uploaded successfully for {self.current_challenge_protein}")
+                        self.last_submitted_product = self.candidate_product
+                        self.last_submission_time = datetime.datetime.now()
+                    else:
+                        bt.logging.error(f"Failed to upload file for {self.current_challenge_protein}")
+                except Exception as e:
+                    bt.logging.error(f"Failed to upload file for {self.current_challenge_protein}: {e}")
+            return
 
     async def run(self):
         # The Main Mining Loop.
@@ -247,7 +361,7 @@ class Miner:
             protein_sequence = get_sequence_from_protein_code(start_protein)
             try:
                 self.psichic_wrapper.run_challenge_start(protein_sequence)
-                bt.logging.info(f"Initialized model for {start_protein}")
+                bt.logging.info(f"Initialized model for {protein_sequence}")
             except Exception as e:
                 bt.logging.error(f"Error initializing model: {e}")
 
@@ -306,26 +420,6 @@ class Miner:
                     except Exception as e:
                         bt.logging.error(f'Error initializing inference: {e}')
 
-
-                # Check if candidate product has changed
-                async with self.shared_lock:
-                    if self.candidate_product:
-                        if self.candidate_product != self.last_submitted_product:
-                            current_product_to_submit = self.candidate_product
-                            current_product_score = self.best_score
-                            try:
-                                await self.subtensor.set_commitment(
-                                    wallet=self.wallet,
-                                    netuid=self.config.netuid,
-                                    data=current_product_to_submit
-                                    )
-                                self.last_submitted_product = current_product_to_submit
-                                bt.logging.info(f'Submitted product: {current_product_to_submit} with score: {current_product_score}')
-
-                            except MetadataError as e:
-                                bt.logging.info(f'Too soon to commit again, will keep looking for better candidates.')
-                            except Exception as e:
-                                bt.logging.error(e)
                 await asyncio.sleep(1)
 
                 # Periodically update our knowledge of the network graph.
