@@ -10,6 +10,8 @@ import asyncio
 #load_dotenv(override=True)
 
 def get_smiles(product_name):
+    # Remove single and double quotes from product_name if they exist
+    product_name = product_name.replace("'", "").replace('"', "")
 
     api_key = os.environ.get("VALIDATOR_API_KEY")
     if not api_key:
