@@ -246,6 +246,7 @@ async def main(config):
 
         # Check if the current block marks the end of an epoch (using a 360-block interval).
         if current_block % config.epoch_length == 0:            # Retrieve commitments from the previous epoch.
+            bt.logging.info(f"Committing for epoch {current_block // config.epoch_length - 1}")
             prev_epoch = current_block - config.epoch_length
             best_stake = -math.inf
             current_protein = None
