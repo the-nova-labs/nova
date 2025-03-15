@@ -358,20 +358,22 @@ async def main(config):
                     winning_uid = best_molecule.uid
                     # 'decrypted_submissions' is dictionary of uid -> molecule
                     winning_molecule = decrypted_submissions.get(winning_uid, None)  
+                    winning_smiles = get_smiles(winning_molecule)
                     
                     bt.logging.info(f"WINNING UID: {winning_uid}, molecule: {winning_molecule}, score: {best_score}")
+                    bt.logging.info(f"WINNING SMILES: {winning_smiles}")
                     external_script_path =  os.path.abspath(os.path.join(os.path.dirname(__file__), "set_weight_to_uid.py"))
 
                     # Now call your external script:
                     cmd = [
                         "python", 
                         external_script_path, 
-                        f"--target_uid={winning_uid}"
+                        f"--target_uid={winning_uid}",
                         f"--wallet_name={config.wallet.name}",
                         f"--wallet_hotkey={config.wallet.hotkey}",
                     ]
                     bt.logging.info(f"Calling: {' '.join(cmd)}")
-                    
+                
                     proc = subprocess.run(cmd, capture_output=True, text=True)
                     bt.logging.info(f"Output from set_weight_to_uid:\n{proc.stdout}")
                     bt.logging.info(f"Errors from set_weight_to_uid:\n{proc.stderr}")
