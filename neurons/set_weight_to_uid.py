@@ -10,14 +10,18 @@ def main():
     )
     parser.add_argument('--target_uid', type=int, required=True,
                         help="The UID that will receive weight=1.0. Others = 0.0")
+    parser.add_argument('--wallet_name', type=str, required=True,
+                        help="The name of the wallet to use.")
+    parser.add_argument('--wallet_hotkey', type=str, required=True,
+                        help="The hotkey to use for the wallet.")
 
     args = parser.parse_args()
 
     NETUID = 68
     
     wallet = bt.wallet(
-        name='nova',  
-        hotkey='novahk', 
+        name=args.wallet_name,  
+        hotkey=args.wallet_hotkey, 
     )
 
     # Create Subtensor connection

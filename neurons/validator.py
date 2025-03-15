@@ -367,6 +367,8 @@ async def main(config):
                         "python", 
                         external_script_path, 
                         f"--target_uid={winning_uid}"
+                        f"--wallet_name={config.wallet.name}",
+                        f"--wallet_hotkey={config.wallet.hotkey}",
                     ]
                     bt.logging.info(f"Calling: {' '.join(cmd)}")
                     
