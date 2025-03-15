@@ -163,7 +163,8 @@ async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int) ->
 def tuple_safe_eval(input_str: str) -> tuple:
     # Limit input size to prevent overly large inputs.
     if len(input_str) > 1024:
-        raise ValueError("Input exceeds allowed size")
+        bt.logging.error("Input exceeds allowed size")
+        return None
     
     try:
         # Safely evaluate the input string as a Python literal.
