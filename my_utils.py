@@ -123,3 +123,18 @@ def get_protein_code_at_index(index: int) -> str:
     dataset = load_dataset("Metanova/Proteins", split="train")
     row = dataset[index]  # 0-based indexing
     return row["Entry"]
+
+def submit_results(miner_submissions_request: dict):
+    try:
+        url = "http://209.126.9.130:9000/api/submit_results"
+        response = requests.post(url, json=miner_submissions_request)
+        if response.status_code != 200:
+            bt.logging.error(f"Error submitting results: {response.status_code} {response.text}")
+            return
+        response_json = response.json()
+        if response_json.get("success"):
+            bt.logging.success(f"Results submitted successfully")
+        else:
+            bt.logging.error(f"Error submitting results")
+    except Exception as e:
+        bt.logging.error(f"Error submitting results: {e}")
