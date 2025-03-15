@@ -67,3 +67,45 @@ logging_dir: /root/nova/neurons
 2025-03-15 13:26:41.551 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 35 blocks remaining.
 2025-03-15 13:26:43.768 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
 2025-03-15 13:26:43.895 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 35 blocks remaining.
+2025-03-15 13:26:46.436 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:26:46.563 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 35 blocks remaining.
+2025-03-15 13:26:49.054 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:26:49.180 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 34 blocks remaining.
+2025-03-15 13:26:51.529 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:26:51.656 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 34 blocks remaining.
+2025-03-15 13:26:53.881 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:26:54.008 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 34 blocks remaining.
+2025-03-15 13:26:56.229 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:26:56.357 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 34 blocks remaining.
+2025-03-15 13:26:58.576 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:26:58.703 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 34 blocks remaining.
+2025-03-15 13:27:01.197 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:27:01.324 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 33 blocks remaining.
+2025-03-15 13:27:03.672 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:27:03.800 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 33 blocks remaining.
+2025-03-15 13:27:06.027 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:27:06.155 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 33 blocks remaining.
+2025-03-15 13:27:08.357 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:27:08.484 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 33 blocks remaining.
+2025-03-15 13:27:10.703 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:27:10.832 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 33 blocks remaining.
+2025-03-15 13:27:13.316 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:27:13.443 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 32 blocks remaining.
+2025-03-15 13:27:15.799 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:27:15.927 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 32 blocks remaining.
+2025-03-15 13:27:18.150 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:27:18.278 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 32 blocks remaining.
+2025-03-15 13:27:20.505 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:27:20.632 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 32 blocks remaining.
+2025-03-15 13:27:22.855 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:27:22.983 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 32 blocks remaining.
+2025-03-15 13:27:25.381 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:27:25.509 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 31 blocks remaining.
+2025-03-15 13:27:27.861 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:27:27.989 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 31 blocks remaining.
+2025-03-15 13:27:30.211 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:27:30.339 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 31 blocks remaining.
+2025-03-15 13:27:32.556 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:27:32.684 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 31 blocks remaining.
+2025-03-15 13:27:34.910 |      DEBUG       | bittensor:dashboard.py:245 | Found 256 nodes in network
+2025-03-15 13:27:35.037 |       INFO       | bittensor:dashboard.py:372 | Waiting for epoch to end... 31 blocks remaining.
