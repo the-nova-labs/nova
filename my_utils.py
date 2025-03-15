@@ -32,7 +32,7 @@ def upload_file_to_github(filename: str, encoded_content: str):
     sha = existing_file.json().get("sha") if existing_file.status_code == 200 else None
 
     payload = {
-        "message": f"Encrypted response for {filename: str}",
+        "message": f"Encrypted response for {filename}",
         "content": encoded_content,
         "branch": github_repo_branch,
     }
