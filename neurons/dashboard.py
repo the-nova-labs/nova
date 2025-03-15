@@ -327,36 +327,6 @@ async def main(config):
                         "submissions": submissions,
                     })
                     submissions = []
-
-            # Ensure a best molecule was found before setting weights.
-            if best_molecule is not None:
-                try:
-                    winning_uid = best_molecule.uid
-                    # 'decrypted_submissions' is dictionary of uid -> molecule
-                    winning_molecule = decrypted_submissions.get(winning_uid, None)  
-                    
-                    bt.logging.info(f"WINNING UID: {winning_uid}, molecule: {winning_molecule}, score: {best_score}")
-                    external_script_path =  os.path.abspath(os.path.join(os.path.dirname(__file__), "set_weight_to_uid.py"))
-
-                    # Now call your external script:
-                    cmd = [
-                        "python", 
-                        external_script_path, 
-                        f"--target_uid={winning_uid}"
-                    ]
-                    bt.logging.info(f"Calling: {' '.join(cmd)}")
-                    
-                    proc = subprocess.run(cmd, capture_output=True, text=True)
-                    bt.logging.info(f"Output from set_weight_to_uid:\n{proc.stdout}")
-                    bt.logging.info(f"Errors from set_weight_to_uid:\n{proc.stderr}")
-                    if proc.returncode != 0:
-                        bt.logging.error(f"Script returned non-zero exit code: {proc.returncode}")
-
-                except Exception as e:
-                    bt.logging.error(f"Error calling set_weight_to_uid script: {e}")
-            else:
-                bt.logging.info("No valid molecule commitment found for current epoch.")
-
             # Sleep briefly to prevent busy-waiting (adjust sleep time as needed).
             await asyncio.sleep(1)
             
