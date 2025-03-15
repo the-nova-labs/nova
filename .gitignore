@@ -1,9 +1,0 @@
-__pycache__/
-.*
-!/.gitignore
-venv
-timelock/
-
-run_dashboard.sh
-
-neurons/bittensor.log
