@@ -242,7 +242,6 @@ async def main(config):
     while True:
         # Fetch the current metagraph for the given subnet (netuid 68).
         metagraph = await subtensor.metagraph(config.netuid)
-        bt.logging.debug(f'Found {metagraph.n} nodes in network')
         current_block = await subtensor.get_current_block()
 
         # Check if the current block marks the end of an epoch (using a 360-block interval).
@@ -369,7 +368,6 @@ async def main(config):
             await asyncio.sleep(12) # Sleep for 1 block to avoid unncessary re-connection
             
         else:
-            bt.logging.info(f"Waiting for epoch to end... {config.epoch_length - (current_block % config.epoch_length)} blocks remaining.")
             await asyncio.sleep(1)
 
 
