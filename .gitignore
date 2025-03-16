@@ -6,3 +6,5 @@ venv
 neurons/bittensor.log
 timelock/
 run_dashboard.sh
+
+results/

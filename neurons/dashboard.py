@@ -1,4 +1,5 @@
 import asyncio
+import json
 from ast import literal_eval
 import math
 import os
@@ -246,97 +247,110 @@ async def main(config):
 
         # Check if the current block marks the end of an epoch (using a 360-block interval).
         if current_block % config.epoch_length == 0:            # Retrieve commitments from the previous epoch.
-            retries = 5
-            for _ in range(retries):
-                try:
-                    bt.logging.info(f"Committing for epoch {current_block // config.epoch_length - 1}")
-                    prev_epoch = current_block - config.epoch_length
-                    best_stake = -math.inf
-                    current_protein = None
+            bt.logging.info(f"Committing for epoch {current_block // config.epoch_length - 1}")
+            prev_epoch = current_block - config.epoch_length
+            best_stake = -math.inf
+            current_protein = None
 
-                    block_to_check = prev_epoch
-                    block_hash_to_check = await subtensor.determine_block_hash(block_to_check + tolerance)  
-                    epoch_metagraph = await subtensor.metagraph(config.netuid, block=block_to_check + tolerance)
-                    epoch_commitments = await get_commitments(subtensor, epoch_metagraph, block_hash_to_check, netuid=config.netuid)
-                    epoch_commitments = {k: v for k, v in epoch_commitments.items() if current_block - v.block <= (config.epoch_length + tolerance)}
-                    
-                    high_stake_protein_commitment = max(
-                        epoch_commitments.values(),
-                        key=lambda commit: epoch_metagraph.S[commit.uid],
-                        default=None
-                    )
-                    if not high_stake_protein_commitment:
-                        bt.logging.error("Error getting current protein commitment.")
-                        current_protein = None
-                        continue
-
-                    protein_codes = high_stake_protein_commitment.data.split('|')
-                    target_protein_code = protein_codes[0]
-                    antitarget_protein_code = protein_codes[1]
-                    bt.logging.info(f"Current target protein: {target_protein_code}, antitarget: {antitarget_protein_code}")
-
-                    target_protein_sequence = get_sequence_from_protein_code(target_protein_code)
-                    antitarget_protein_sequence = get_sequence_from_protein_code(antitarget_protein_code)
-
-                    # Retrieve the latest commitments (current epoch).
-                    current_block_hash = await subtensor.determine_block_hash(current_block)
-                    current_commitments = await get_commitments(subtensor, metagraph, current_block_hash, netuid=config.netuid)
-                    bt.logging.debug(f"Current commitments: {len(list(current_commitments.values()))}")
-
-                    # Decrypt submissions
-                    decrypted_submissions = decrypt_submissions(current_commitments)
-
-                    # Identify the best molecule based on the scoring function.
-                    best_score = -math.inf
-                    total_commits = 0
-                    best_molecule = None
-
-                    competition = {
-                        "epoch_number": current_block // config.epoch_length - 1,
-                        "target_protein": target_protein_code,
-                        "anti_target_protein": antitarget_protein_code,
-                    }
-                    submissions = []
-                    MAX_SUBMISSION_SIZE = 15
-
-                    for hotkey, commit in current_commitments.items():
-                        if current_block - commit.block <= config.epoch_length:
-                            # Find the decrypted submission for the current commitment
-                            try:    
-                                molecule = decrypted_submissions[commit.uid]
-                                total_commits += 1
-                            except Exception as e:
-                                bt.logging.error(f"Decrypted submission for {commit.uid} not found: {e}")
-                                continue
-                            score = run_model_difference(target_protein_sequence, antitarget_protein_sequence, molecule)
-                            score = round(score, 3)
-                            submissions.append({
-                                "neuron": {
-                                    "hotkey": hotkey,
-                                },
-                                "block_number": commit.block,
-                                "molecule": molecule,
-                                "score": score,
-                            })
-                            if len(submissions) >= MAX_SUBMISSION_SIZE:                        
-                                submit_results({
-                                    "competition": competition,
-                                    "submissions": submissions,
-                                })
-                                submissions = []
-
-                        if len(submissions) > 0:
-                            submit_results({
-                                "competition": competition,
-                                "submissions": submissions,
-                            })
-                            submissions = []
-                        break
-                except Exception as e:
-                    bt.logging.error(f"Error committing: {e}")
-                    await asyncio.sleep(1)
-            await asyncio.sleep(1)
+            block_to_check = prev_epoch
+            block_hash_to_check = await subtensor.determine_block_hash(block_to_check + tolerance)  
+            epoch_metagraph = await subtensor.metagraph(config.netuid, block=block_to_check + tolerance)
+            epoch_commitments = await get_commitments(subtensor, epoch_metagraph, block_hash_to_check, netuid=config.netuid)
+            epoch_commitments = {k: v for k, v in epoch_commitments.items() if current_block - v.block <= (config.epoch_length + tolerance)}
             
+            high_stake_protein_commitment = max(
+                epoch_commitments.values(),
+                key=lambda commit: epoch_metagraph.S[commit.uid],
+                default=None
+            )
+            if not high_stake_protein_commitment:
+                bt.logging.error("Error getting current protein commitment.")
+                current_protein = None
+                continue
+
+            protein_codes = high_stake_protein_commitment.data.split('|')
+            target_protein_code = protein_codes[0]
+            antitarget_protein_code = protein_codes[1]
+            bt.logging.info(f"Current target protein: {target_protein_code}, antitarget: {antitarget_protein_code}")
+
+            target_protein_sequence = get_sequence_from_protein_code(target_protein_code)
+            antitarget_protein_sequence = get_sequence_from_protein_code(antitarget_protein_code)
+
+            # Retrieve the latest commitments (current epoch).
+            current_block_hash = await subtensor.determine_block_hash(current_block)
+            current_commitments = await get_commitments(subtensor, metagraph, current_block_hash, netuid=config.netuid)
+            bt.logging.debug(f"Current commitments: {len(list(current_commitments.values()))}")
+
+            # Decrypt submissions
+            decrypted_submissions = decrypt_submissions(current_commitments)
+
+            # Identify the best molecule based on the scoring function.
+            best_score = -math.inf
+            total_commits = 0
+            best_molecule = None
+
+            competition = {
+                "epoch_number": current_block // config.epoch_length - 1,
+                "target_protein": target_protein_code,
+                "anti_target_protein": antitarget_protein_code,
+            }
+            submissions = []
+            MAX_SUBMISSION_SIZE = 15
+            epoch_number = current_block // config.epoch_length - 1
+            save_file_path = f"results/submissions_epoch_{epoch_number}.json"
+            to_save_file_submissions = []
+            for hotkey, commit in current_commitments.items():
+                if current_block - commit.block <= config.epoch_length:
+                    # Find the decrypted submission for the current commitment
+                    try:    
+                        molecule = decrypted_submissions[commit.uid]
+                        total_commits += 1
+                    except Exception as e:
+                        bt.logging.error(f"Decrypted submission for {commit.uid} not found: {e}")
+                        continue
+                    score = run_model_difference(target_protein_sequence, antitarget_protein_sequence, molecule)
+                    score = round(score, 3)
+                    submissions.append({
+                        "neuron": {
+                            "hotkey": hotkey,
+                        },
+                        "block_number": commit.block,
+                        "molecule": molecule,
+                        "score": score,
+                    })
+
+                    to_save_file_submissions.append(
+                        {
+                            "neuron": {
+                                "hotkey": hotkey,
+                            },
+                            "block_number": commit.block,
+                            "molecule": molecule,
+                            "score": score,
+                        }
+                    )
+                    if len(submissions) >= MAX_SUBMISSION_SIZE:                        
+                        submit_results({
+                            "competition": competition,
+                            "submissions": submissions,
+                        })
+                        submissions = []
+
+                if len(submissions) > 0:
+                    submit_results({
+                        "competition": competition,
+                        "submissions": submissions,
+                    })
+                    submissions = []
+                
+                to_save_file_submissions.sort(key=lambda x: x['score'], reverse=True)
+                with open(save_file_path, 'w') as f:
+                    json.dump({
+                        "competition": competition,
+                        "submissions": to_save_file_submissions,
+                    }, f, indent=4)
+
+            await asyncio.sleep(1)
         # keep validator alive
         elif current_block % (config.epoch_length/2) == 0:
             subtensor = bt.async_subtensor(network=config.network)
