@@ -335,20 +335,20 @@ async def main(config):
                             "submissions": submissions,
                         })
                         submissions = []
-
-                if len(submissions) > 0:
-                    submit_results({
-                        "competition": competition,
-                        "submissions": submissions,
-                    })
-                    submissions = []
+            
+            if len(submissions) > 0:
+                submit_results({
+                    "competition": competition,
+                    "submissions": submissions,
+                })
+                submissions = []
                 
-                to_save_file_submissions.sort(key=lambda x: x['score'], reverse=True)
-                with open(save_file_path, 'w') as f:
-                    json.dump({
-                        "competition": competition,
-                        "submissions": to_save_file_submissions,
-                    }, f, indent=4)
+            to_save_file_submissions.sort(key=lambda x: x['score'], reverse=True)
+            with open(save_file_path, 'w') as f:
+                json.dump({
+                    "competition": competition,
+                    "submissions": to_save_file_submissions,
+                }, f, indent=4)
 
             await asyncio.sleep(1)
         # keep validator alive
