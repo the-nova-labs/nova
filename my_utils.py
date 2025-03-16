@@ -130,7 +130,11 @@ def submit_results(miner_submissions_request: dict):
         if not api_token:
             raise ValueError("API_TOKEN environment variable not set.")
 
-        url = "http://209.126.9.130:9000/api/submit_results"
+        dashboard_backend_url = os.environ.get("DASHBOARD_BACKEND_URL")
+        if not dashboard_backend_url:
+            raise ValueError("DASHBOARD_BACKEND_URL environment variable not set.")
+
+        url = dashboard_backend_url + "/api/submit_results"
         headers = {
             "Authorization": f"Bearer {api_token}",
             "Content-Type": "application/json"
