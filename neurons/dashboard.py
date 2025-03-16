@@ -288,15 +288,13 @@ async def main(config):
             best_score = -math.inf
             total_commits = 0
             best_molecule = None
-
+            epoch_number = current_block // config.epoch_length - 1
             competition = {
-                "epoch_number": current_block // config.epoch_length - 1,
+                "epoch_number": epoch_number,
                 "target_protein": target_protein_code,
                 "anti_target_protein": antitarget_protein_code,
             }
             submissions = []
-            epoch_number = current_block // config.epoch_length - 1
-            save_file_path = f"results/submissions_epoch_{epoch_number}.json"
             for hotkey, commit in current_commitments.items():
                 if current_block - commit.block <= config.epoch_length:
                     # Find the decrypted submission for the current commitment
@@ -321,7 +319,8 @@ async def main(config):
                 "competition": competition,
                 "submissions": submissions,
             })
-                
+            
+            save_file_path = f"results/submissions_epoch_{epoch_number}.json"
             submissions.sort(key=lambda x: x['score'], reverse=True)
             with open(save_file_path, 'w') as f:
                 json.dump({
