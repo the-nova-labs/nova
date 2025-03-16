@@ -295,10 +295,8 @@ async def main(config):
                 "anti_target_protein": antitarget_protein_code,
             }
             submissions = []
-            MAX_SUBMISSION_SIZE = 15
             epoch_number = current_block // config.epoch_length - 1
             save_file_path = f"results/submissions_epoch_{epoch_number}.json"
-            to_save_file_submissions = []
             for hotkey, commit in current_commitments.items():
                 if current_block - commit.block <= config.epoch_length:
                     # Find the decrypted submission for the current commitment
@@ -318,36 +316,17 @@ async def main(config):
                         "molecule": molecule,
                         "score": score,
                     })
-
-                    to_save_file_submissions.append(
-                        {
-                            "neuron": {
-                                "hotkey": hotkey,
-                            },
-                            "block_number": commit.block,
-                            "molecule": molecule,
-                            "score": score,
-                        }
-                    )
-                    if len(submissions) >= MAX_SUBMISSION_SIZE:                        
-                        submit_results({
-                            "competition": competition,
-                            "submissions": submissions,
-                        })
-                        submissions = []
             
-            if len(submissions) > 0:
-                submit_results({
-                    "competition": competition,
-                    "submissions": submissions,
-                })
-                submissions = []
+            submit_results({
+                "competition": competition,
+                "submissions": submissions,
+            })
                 
-            to_save_file_submissions.sort(key=lambda x: x['score'], reverse=True)
+            submissions.sort(key=lambda x: x['score'], reverse=True)
             with open(save_file_path, 'w') as f:
                 json.dump({
                     "competition": competition,
-                    "submissions": to_save_file_submissions,
+                    "submissions": submissions,
                 }, f, indent=4)
 
             await asyncio.sleep(1)
@@ -357,7 +336,7 @@ async def main(config):
             await subtensor.initialize()
             bt.logging.info("Validator reset subtensor connection.")
             await asyncio.sleep(12) # Sleep for 1 block to avoid unncessary re-connection
-            
+
         else:
             await asyncio.sleep(1)
 
