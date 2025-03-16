@@ -320,14 +320,16 @@ async def main(config):
                 "submissions": submissions,
             })
             
-            save_file_path = f"results/submissions_epoch_{epoch_number}.json"
-            submissions.sort(key=lambda x: x['score'], reverse=True)
-            with open(save_file_path, 'w') as f:
-                json.dump({
-                    "competition": competition,
-                    "submissions": submissions,
-                }, f, indent=4)
-
+            try:
+                save_file_path = f"results/submissions_epoch_{epoch_number}.json"
+                submissions.sort(key=lambda x: (x['score'], -x['block_number']), reverse=True)
+                with open(save_file_path, 'w') as f:
+                    json.dump({
+                        "competition": competition,
+                        "submissions": submissions,
+                    }, f, indent=4)
+            except Exception as e:
+                bt.logging.error(f"Error saving submissions: {e}")
             await asyncio.sleep(1)
         # keep validator alive
         elif current_block % (config.epoch_length/2) == 0:
