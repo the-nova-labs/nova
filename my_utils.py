@@ -126,8 +126,16 @@ def get_protein_code_at_index(index: int) -> str:
 
 def submit_results(miner_submissions_request: dict):
     try:
+        api_token = os.environ.get("API_TOKEN")
+        if not api_token:
+            raise ValueError("API_TOKEN environment variable not set.")
+
         url = "http://209.126.9.130:9000/api/submit_results"
-        response = requests.post(url, json=miner_submissions_request)
+        headers = {
+            "Authorization": f"Bearer {api_token}",
+            "Content-Type": "application/json"
+        }
+        response = requests.post(url, json=miner_submissions_request, headers=headers)
         if response.status_code != 200:
             bt.logging.error(f"Error submitting results: {response.status_code} {response.text}")
             return

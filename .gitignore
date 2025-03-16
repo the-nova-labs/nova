@@ -6,5 +6,6 @@ venv
 neurons/bittensor.log
 timelock/
 run_dashboard.sh
+test_submit_results.py
 
 results/
