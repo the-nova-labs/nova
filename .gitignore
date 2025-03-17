@@ -9,3 +9,5 @@ run_dashboard.sh
 test_submit_results.py
 
 results/
+
+test.py
