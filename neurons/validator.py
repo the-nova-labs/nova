@@ -99,8 +99,8 @@ def run_model(protein: str, molecule: str) -> float:
 
     smiles = get_smiles(molecule)
     if not smiles:
-        bt.logging.debug(f"Could not retrieve SMILES for '{molecule}', returning score of 0.0.")
-        return 0.0
+        bt.logging.debug(f"Could not retrieve SMILES for '{molecule}', returning score of -inf.")
+        return -math.inf
 
     results_df = psichic.run_validation([smiles])  # returns a DataFrame
     if results_df.empty:
