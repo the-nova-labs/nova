@@ -192,7 +192,9 @@ def decrypt_submissions(current_commitments: dict, headers: dict = {"Range": "by
     """
     encrypted_submissions = {}
     for commit in current_commitments.values():
-        if '/' in commit.data: # Filter only url submissions
+        if '/' not in commit.data:
+            continue
+        try:
             full_url = f"https://raw.githubusercontent.com/{commit.data}"
             response = requests.get(full_url, headers=headers)
             if response.status_code in [200, 206]:
@@ -210,15 +212,16 @@ def decrypt_submissions(current_commitments: dict, headers: dict = {"Range": "by
                 if encrypted_content is None:
                     bt.logging.error(f"Encrypted content for {commit.uid} is not a tuple")
                     continue
-
                 encrypted_submissions[commit.uid] = (encrypted_content[0], encrypted_content[1])
             else:
                 bt.logging.error(f"Error fetching encrypted submission: {response.status_code}")
                 bt.logging.error(f"uid: {commit.uid}, commited data: {commit.data}")
                 continue
+        except Exception as e:
+            bt.logging.error(f"Error decrypting submission: {e}")
+            continue
 
     bt.logging.info(f"Encrypted submissions: {len(encrypted_submissions)}")
-    
     decrypted_submissions = btd.decrypt_dict(encrypted_submissions)
     bt.logging.info(f"Decrypted submissions: {len(decrypted_submissions)}")
             

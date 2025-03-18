@@ -12,4 +12,5 @@ def submit_results_mannual(epoch_number: int):
 
 
 if __name__ == "__main__":
-    submit_results_mannual(14299)
+    for i in range(14281, 14300):
+        submit_results_mannual(i)
