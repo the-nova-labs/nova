@@ -116,7 +116,11 @@ class AbstractBittensorDrandTimelock:
         # cipher: Fernet = Fernet(key)
         # decrypted_message: str = cipher.decrypt(encrypted_message).decode()
         print(repr(ciphertext))
-        plaintext = self.tl.tld(ciphertext, signature).decode()
+        try:
+            plaintext = self.tl.tld(ciphertext, signature).decode()
+        except Exception as e:
+            bt.logging.error(f"Error decrypting message: {e}")
+            return None
 
         expected_prefix = f"{uid}:"
         if not plaintext.startswith(expected_prefix):
