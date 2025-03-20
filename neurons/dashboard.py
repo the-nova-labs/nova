@@ -311,7 +311,11 @@ async def main(config):
                         score = run_model_difference(target_protein_sequence, antitarget_protein_sequence, molecule)
                         score = round(score, 3)
                     except Exception as e:
-                        bt.logging.error(f"Error scoring molecule {molecule}: {e}")
+                        bt.logging.error(
+                            f"Error scoring molecule {molecule}: {e}"
+                            f"Uid: {commit.uid}"
+                            f"Hotkey: {hotkey}"
+                        )
                         score = -math.inf
                     submissions.append({
                         "neuron": {
