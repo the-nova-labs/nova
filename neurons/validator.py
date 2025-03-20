@@ -45,7 +45,7 @@ def get_config():
 
 def setup_logging(config):
     """
-    Configures Bittensor logging to write logs to a file named `validator.log`
+    Configures Bittensor logging to write logs to a file named `validator.log` 
     in the same directory as this Python file
     """
     # Use the directory of this file (so validator log is in the same folder).
@@ -66,8 +66,8 @@ async def check_registration(wallet, subtensor, netuid):
     if my_hotkey_ss58 not in metagraph.hotkeys:
         bt.logging.error(f"Hotkey {my_hotkey_ss58} is not registered on netuid {netuid}.")
         bt.logging.error("Are you sure you've registered and staked?")
-        sys.exit(1)
-
+        sys.exit(1) 
+    
     uid = metagraph.hotkeys.index(my_hotkey_ss58)
     myStake = metagraph.S[uid]
     bt.logging.info(f"Hotkey {my_hotkey_ss58} found with UID={uid} and stake={myStake}")
@@ -99,7 +99,7 @@ def run_model(protein: str, molecule: str) -> float:
 
     smiles = get_smiles(molecule)
     if not smiles:
-        bt.logging.debug(f"Could not retrieve SMILES for '{molecule}', returning score of -inf")
+        bt.logging.debug(f"Could not retrieve SMILES for '{molecule}', returning score of 0.0.")
         return -math.inf
 
     results_df = psichic.run_validation([smiles])  # returns a DataFrame
@@ -165,7 +165,7 @@ def tuple_safe_eval(input_str: str) -> tuple:
     if len(input_str) > 1024:
         bt.logging.error("Input exceeds allowed size")
         return None
-
+    
     try:
         # Safely evaluate the input string as a Python literal.
         result = literal_eval(input_str)
@@ -182,12 +182,12 @@ def tuple_safe_eval(input_str: str) -> tuple:
     if not isinstance(result[0], int):
         bt.logging.error("First element must be an int")
         return None
-
+    
     # Verify that the second element is a bytes object.
     if not isinstance(result[1], bytes):
         bt.logging.error("Second element must be a bytes object")
         return None
-
+    
     return result
 
 def decrypt_submissions(current_commitments: dict, headers: dict = {"Range": "bytes=0-1024"}) -> dict:
@@ -199,7 +199,7 @@ def decrypt_submissions(current_commitments: dict, headers: dict = {"Range": "by
             - uid: Miner's unique identifier
             - data: GitHub URL path containing the encrypted submission
             - Other commitment metadata
-        headers (dict, optional): HTTP request headers for fetching content.
+        headers (dict, optional): HTTP request headers for fetching content. 
             Defaults to {"Range": "bytes=0-1024"} to limit response size.
 
     Returns:
@@ -243,7 +243,7 @@ def decrypt_submissions(current_commitments: dict, headers: dict = {"Range": "by
                 continue
 
     bt.logging.info(f"Encrypted submissions: {len(encrypted_submissions)}")
-
+    
     try:
         decrypted_submissions = btd.decrypt_dict(encrypted_submissions)
     except Exception as e:
@@ -251,7 +251,7 @@ def decrypt_submissions(current_commitments: dict, headers: dict = {"Range": "by
         decrypted_submissions = {}
 
     bt.logging.info(f"Decrypted submissions: {len(decrypted_submissions)}")
-
+            
     return decrypted_submissions
 
 
@@ -311,11 +311,11 @@ async def main(config):
             current_protein = None
 
             block_to_check = prev_epoch
-            block_hash_to_check = await subtensor.determine_block_hash(block_to_check + tolerance)
+            block_hash_to_check = await subtensor.determine_block_hash(block_to_check + tolerance)  
             epoch_metagraph = await subtensor.metagraph(config.netuid, block=block_to_check + tolerance)
             epoch_commitments = await get_commitments(subtensor, epoch_metagraph, block_hash_to_check, netuid=config.netuid)
             epoch_commitments = {k: v for k, v in epoch_commitments.items() if current_block - v.block <= (config.epoch_length + tolerance)}
-
+            
             high_stake_protein_commitment = max(
                 epoch_commitments.values(),
                 key=lambda commit: epoch_metagraph.S[commit.uid],
@@ -349,14 +349,20 @@ async def main(config):
             for hotkey, commit in current_commitments.items():
                 if current_block - commit.block <= config.epoch_length:
                     # Find the decrypted submission for the current commitment
-                    try:
+                    try:    
                         molecule = decrypted_submissions[commit.uid]
                         total_commits += 1
                     except Exception as e:
                         bt.logging.error(f"Decrypted submission for {commit.uid} not found: {e}")
                         continue
-                    score = run_model_difference(target_protein_sequence, antitarget_protein_sequence, molecule)
-                    score = round(score, 3)
+                    try:
+                        score = run_model_difference(target_protein_sequence, antitarget_protein_sequence, molecule)
+                        score = round(score, 3)
+                    except Exception as e:
+                        bt.logging.error(f"Error socring commit from UID: {commit.uid} Molecule: {molecule}: {e}")
+                        score = -math.inf
+                        continue
+                    
                     bt.logging.info(f"Submission for UID: {commit.uid}, molecule: {molecule}, score: {score}")
                     # If the score is higher, or equal but the block is earlier, update the best.
                     if (score > best_score) or (score == best_score and best_molecule is not None and commit.block < best_molecule.block):
@@ -368,23 +374,23 @@ async def main(config):
                 try:
                     winning_uid = best_molecule.uid
                     # 'decrypted_submissions' is dictionary of uid -> molecule
-                    winning_molecule = decrypted_submissions.get(winning_uid, None)
+                    winning_molecule = decrypted_submissions.get(winning_uid, None)  
                     winning_smiles = get_smiles(winning_molecule)
-
+                    
                     bt.logging.info(f"WINNING UID: {winning_uid}, molecule: {winning_molecule}, score: {best_score}")
                     bt.logging.info(f"WINNING SMILES: {winning_smiles}")
                     external_script_path =  os.path.abspath(os.path.join(os.path.dirname(__file__), "set_weight_to_uid.py"))
 
                     # Now call your external script:
                     cmd = [
-                        "python",
-                        external_script_path,
+                        "python", 
+                        external_script_path, 
                         f"--target_uid={winning_uid}",
                         f"--wallet_name={config.wallet.name}",
                         f"--wallet_hotkey={config.wallet.hotkey}",
                     ]
                     bt.logging.info(f"Calling: {' '.join(cmd)}")
-
+                
                     proc = subprocess.run(cmd, capture_output=True, text=True)
                     bt.logging.info(f"Output from set_weight_to_uid:\n{proc.stdout}")
                     bt.logging.info(f"Errors from set_weight_to_uid:\n{proc.stderr}")
@@ -398,14 +404,14 @@ async def main(config):
 
             # Sleep briefly to prevent busy-waiting (adjust sleep time as needed).
             await asyncio.sleep(1)
-
+            
         # keep validator alive
         elif current_block % (config.epoch_length/2) == 0:
             subtensor = bt.async_subtensor(network=config.network)
             await subtensor.initialize()
             bt.logging.info("Validator reset subtensor connection.")
             await asyncio.sleep(12) # Sleep for 1 block to avoid unncessary re-connection
-
+            
         else:
             bt.logging.info(f"Waiting for epoch to end... {config.epoch_length - (current_block % config.epoch_length)} blocks remaining.")
             await asyncio.sleep(1)
