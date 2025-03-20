@@ -316,7 +316,7 @@ async def main(config):
                             f"Uid: {commit.uid}"
                             f"Hotkey: {hotkey}"
                         )
-                        score = -math.inf
+                        score = -9000.0
                     submissions.append({
                         "neuron": {
                             "hotkey": hotkey,
