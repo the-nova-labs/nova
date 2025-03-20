@@ -307,8 +307,12 @@ async def main(config):
                     except Exception as e:
                         bt.logging.error(f"Decrypted submission for {commit.uid} not found: {e}")
                         continue
-                    score = run_model_difference(target_protein_sequence, antitarget_protein_sequence, molecule)
-                    score = round(score, 3)
+                    try:
+                        score = run_model_difference(target_protein_sequence, antitarget_protein_sequence, molecule)
+                        score = round(score, 3)
+                    except Exception as e:
+                        bt.logging.error(f"Error scoring molecule {molecule}: {e}")
+                        score = -math.inf
                     submissions.append({
                         "neuron": {
                             "hotkey": hotkey,
