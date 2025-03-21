@@ -144,19 +144,10 @@ async def setup_bittensor_objects(config: argparse.Namespace) -> Tuple[Any, Any,
         async with bt.async_subtensor(network=config.network) as subtensor:
             bt.logging.info(f"Connected to subtensor network: {config.network}")
             
-            # Sync metagraph with retries
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    metagraph = await subtensor.metagraph(config.netuid)
-                    await metagraph.sync()
-                    bt.logging.info(f"Metagraph synced successfully on attempt {attempt + 1}")
-                    break
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        raise
-                    bt.logging.warning(f"Metagraph sync attempt {attempt + 1} failed: {e}")
-                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+            # Sync metagraph
+            metagraph = await subtensor.metagraph(config.netuid)
+            await metagraph.sync()
+            bt.logging.info(f"Metagraph synced successfully.")
 
             bt.logging.info(f"Subtensor: {subtensor}")
             bt.logging.info(f"Metagraph synced: {metagraph}")
@@ -165,25 +156,16 @@ async def setup_bittensor_objects(config: argparse.Namespace) -> Tuple[Any, Any,
             miner_uid = metagraph.hotkeys.index(wallet.hotkey.ss58_address)
             bt.logging.info(f"Miner UID: {miner_uid}")
 
-            # Query epoch length with retries
+            # Query epoch length
             node = SubstrateInterface(url=config.network)
-            for attempt in range(max_retries):
-                try:
-                    epoch_length = node.query("SubtensorModule", "Tempo", [config.netuid]).value
-                    bt.logging.info(f"Epoch length query successful on attempt {attempt + 1}")
-                    break
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        raise
-                    bt.logging.warning(f"Epoch length query attempt {attempt + 1} failed: {e}")
-                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+            epoch_length = node.query("SubtensorModule", "Tempo", [config.netuid]).value
+            bt.logging.info(f"Epoch length query successful: {epoch_length} blocks")
 
         return wallet, subtensor, metagraph, miner_uid, epoch_length
     except Exception as e:
         bt.logging.error(f"Failed to setup Bittensor objects: {e}")
         bt.logging.error("Please check your network connection and the subtensor network status")
         raise
-
 
 # ----------------------------------------------------------------------------
 # 4. DATA SETUP
@@ -364,27 +346,18 @@ async def submit_response(state: Dict[str, Any]) -> None:
         commit_content = f"{state['github_path']}/{filename}.txt"
         bt.logging.info(f"Prepared commit content: {commit_content}")
 
-        # 3) Attempt chain commitment with retries
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                bt.logging.info(f"Attempting chain commitment (attempt {attempt + 1}/{max_retries})...")
-                commitment_status = await state['subtensor'].set_commitment(
-                    wallet=state['wallet'],
-                    netuid=state['config'].netuid,
-                    data=commit_content
-                )
-                bt.logging.info(f"Chain commitment status: {commitment_status}")
-                break
-            except MetadataError:
-                bt.logging.info("Too soon to commit again. Will keep looking for better candidates.")
-                return
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    bt.logging.error(f"Failed to set commitment after {max_retries} attempts: {e}")
-                    return
-                bt.logging.warning(f"Chain commitment attempt {attempt + 1} failed: {e}")
-                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+        # 3) Attempt chain commitment
+        bt.logging.info(f"Attempting chain commitment...")
+        try: 
+            commitment_status = await state['subtensor'].set_commitment(
+                wallet=state['wallet'],
+                netuid=state['config'].netuid,
+                data=commit_content
+            )
+            bt.logging.info(f"Chain commitment status: {commitment_status}")
+        except MetadataError:
+            bt.logging.info("Too soon to commit again. Will keep looking for better candidates.")
+            return
 
         # 4) If chain commitment success, upload to GitHub
         if commitment_status:
@@ -428,7 +401,7 @@ async def run_miner(config: argparse.Namespace) -> None:
         'config': config,
         'hugging_face_dataset_repo': 'Metanova/SAVI-2020',
         'psichic_result_column_name': 'predicted_binding_affinity',
-        'chunk_size': 1024,
+        'chunk_size': 128,
         'submission_interval': 1200,
 
         # GitHub
@@ -467,7 +440,7 @@ async def run_miner(config: argparse.Namespace) -> None:
     next_boundary = last_boundary + epoch_length
 
     # If we start too close to epoch end, wait for next epoch
-    if current_block - next_boundary > -10:
+    if next_boundary - current_block < 10:
         bt.logging.info(f"Too close to epoch end, waiting for next epoch to start...")
         block_to_check = next_boundary
         await asyncio.sleep(12*10)
@@ -504,12 +477,30 @@ async def run_miner(config: argparse.Namespace) -> None:
                 state['psichic_models'][antitarget_protein] = model
                 bt.logging.info(f"Initialized model for antitarget: {antitarget_protein}")
         except Exception as e:
-            bt.logging.error(f"Error initializing models: {e}")
-            # Attempt model file download from HF if missing
-            os.system(
-                f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/PDBv2020_PSICHIC/model.pt')} "
-                f"https://huggingface.co/Metanova/PSICHIC/resolve/main/model.pt"
-            )
+            try:
+                os.system(
+                    f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/PDBv2020_PSICHIC/model.pt')} "
+                    f"https://huggingface.co/Metanova/PSICHIC/resolve/main/model.pt"
+                )
+                # Retry initialization after download
+                for target_protein in state['current_challenge_targets']:
+                    if target_protein not in state['psichic_models']:
+                        target_sequence = get_sequence_from_protein_code(target_protein)
+                        model = PsichicWrapper()
+                        model.run_challenge_start(target_sequence)
+                        state['psichic_models'][target_protein] = model
+                        bt.logging.info(f"Initialized model for target: {target_protein}")
+
+                for antitarget_protein in state['current_challenge_antitargets']:
+                    if antitarget_protein not in state['psichic_models']:
+                        antitarget_sequence = get_sequence_from_protein_code(antitarget_protein)
+                        model = PsichicWrapper()
+                        model.run_challenge_start(antitarget_sequence)
+                        state['psichic_models'][antitarget_protein] = model
+                        bt.logging.info(f"Initialized model for antitarget: {antitarget_protein}")
+                bt.logging.info("Models re-downloaded and initialized successfully.")
+            except Exception as e2:
+                bt.logging.error(f"Error initializing models after re-download attempt: {e2}")
 
         # 4) Launch the inference loop
         try:
@@ -521,33 +512,14 @@ async def run_miner(config: argparse.Namespace) -> None:
     # 5) Main epoch-based loop
     while True:
         try:
-            # Get current block with retries
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    current_block = await subtensor.get_current_block()
-                    break
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        raise
-                    bt.logging.warning(f"Failed to get current block (attempt {attempt + 1}/{max_retries}): {e}")
-                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+            current_block = await subtensor.get_current_block()
 
             # If we are at an epoch boundary, fetch new proteins
             if current_block % epoch_length == 0:
                 bt.logging.info(f"Found epoch boundary at block {current_block}.")
                 
-                # Get block hash with retries
-                for attempt in range(max_retries):
-                    try:
-                        block_hash = await subtensor.determine_block_hash(current_block)
-                        break
-                    except Exception as e:
-                        if attempt == max_retries - 1:
-                            raise
-                        bt.logging.warning(f"Failed to get block hash (attempt {attempt + 1}/{max_retries}): {e}")
-                        await asyncio.sleep(2 ** attempt)  # Exponential backoff
-
+                block_hash = await subtensor.determine_block_hash(current_block)
+                
                 new_proteins = get_challenge_proteins_from_blockhash(
                     block_hash=block_hash,
                     num_targets=config.num_targets,
