@@ -4,6 +4,7 @@ import json
 from dotenv import load_dotenv
 import bittensor as bt
 from datasets import load_dataset
+import random
 
 import asyncio
 
@@ -123,3 +124,49 @@ def get_protein_code_at_index(index: int) -> str:
     dataset = load_dataset("Metanova/Proteins", split="train")
     row = dataset[index]  # 0-based indexing
     return row["Entry"]
+
+def get_challenge_proteins_from_blockhash(block_hash: str, num_targets: int, num_antitargets: int) -> dict:
+    """
+    Use block_hash as a seed to pick 'num_targets' and 'num_antitargets' random entries
+    from the 'Metanova/Proteins' dataset. Returns {'targets': [...], 'antitargets': [...]}.
+    """
+    if not (isinstance(block_hash, str) and block_hash.startswith("0x")):
+        raise ValueError("block_hash must start with '0x'.")
+    if num_targets < 0 or num_antitargets < 0:
+        raise ValueError("num_targets and num_antitargets must be non-negative.")
+
+    # Convert block hash to an integer seed
+    try:
+        seed = int(block_hash[2:], 16)
+    except ValueError:
+        raise ValueError(f"Invalid hex in block_hash: {block_hash}")
+
+    # Initialize random number generator
+    rng = random.Random(seed)
+
+    # Load huggingface protein dataset
+    try:
+        dataset = load_dataset("Metanova/Proteins", split="train")
+    except Exception as e:
+        raise RuntimeError("Could not load the 'Metanova/Proteins' dataset.") from e
+
+    dataset_size = len(dataset)
+    if dataset_size == 0:
+        raise ValueError("Dataset is empty; cannot pick random entries.")
+
+    # Generate random picks from dataset for targets
+    targets = []
+    for _ in range(num_targets):
+        idx = rng.randrange(dataset_size)
+        targets.append(dataset[idx]["Entry"])
+
+    # Generate random picks from dataset for antitargets
+    antitargets = []
+    for _ in range(num_antitargets):
+        idx = rng.randrange(dataset_size)
+        antitargets.append(dataset[idx]["Entry"])
+
+    return {
+        "targets": targets,
+        "antitargets": antitargets
+    }
