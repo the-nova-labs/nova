@@ -136,17 +136,16 @@ def get_challenge_proteins_from_blockhash(block_hash: str, num_targets: int, num
     if dataset_size == 0:
         raise ValueError("Dataset is empty; cannot pick random entries.")
 
-    # Generate random picks from dataset for targets
-    targets = []
-    for _ in range(num_targets):
-        idx = rng.randrange(dataset_size)
-        targets.append(dataset[idx]["Entry"])
+    # Grab all required indices at once, ensure uniqueness
+    unique_indices = rng.sample(range(dataset_size), k=(num_targets + num_antitargets))
 
-    # Generate random picks from dataset for antitargets
-    antitargets = []
-    for _ in range(num_antitargets):
-        idx = rng.randrange(dataset_size)
-        antitargets.append(dataset[idx]["Entry"])
+    # Split the first 'num_targets' for targets, the rest for antitargets
+    target_indices = unique_indices[:num_targets]
+    antitarget_indices = unique_indices[num_targets:]
+
+    # Convert indices to protein codes
+    targets = [dataset[i]["Entry"] for i in target_indices]
+    antitargets = [dataset[i]["Entry"] for i in antitarget_indices]
 
     return {
         "targets": targets,
