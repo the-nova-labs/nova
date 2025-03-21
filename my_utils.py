@@ -107,24 +107,6 @@ def get_sequence_from_protein_code(protein_code:str) -> str:
         amino_acid_sequence = ''.join(sequence_lines)
         return amino_acid_sequence
 
-def get_index_in_range_from_blockhash(block_hash: str, range_max: int) -> int:
-
-    block_hash_str = block_hash.lower().removeprefix('0x')
-    
-    # Convert the hex string to an integer
-    hash_int = int(block_hash_str, 16)
-
-    # Modulo by the desired range
-    random_index = hash_int % range_max
-
-    return random_index
-
-def get_protein_code_at_index(index: int) -> str:
-    
-    dataset = load_dataset("Metanova/Proteins", split="train")
-    row = dataset[index]  # 0-based indexing
-    return row["Entry"]
-
 def get_challenge_proteins_from_blockhash(block_hash: str, num_targets: int, num_antitargets: int) -> dict:
     """
     Use block_hash as a seed to pick 'num_targets' and 'num_antitargets' random entries
