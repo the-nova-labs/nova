@@ -244,7 +244,7 @@ def score_protein_for_all_uids(
 
         if not smiles:
             bt.logging.debug(f"No SMILES found for UID={uid}, molecule='{data['molecule']}'.")
-            score_dict[uid]["target_scores" if is_target else "antitarget_scores"][col_idx] = -math.inf
+
         else:
             try:
                 results_df = psichic.run_validation([smiles])
@@ -282,11 +282,15 @@ def determine_winner(
         antitargets = score_dict[uid]['antitarget_scores']
         submission_block = data["block_submitted"]
 
+        # Replace None with -inf
+        targets = [-math.inf if s is None else s for s in targets]
+        antitargets = [-math.inf if s is None else s for s in antitargets]
+
         # Compute final score
-        target_sum = sum(s for s in targets if s is not None)
+        target_sum = sum(targets)
         target_score = target_sum / len(targets)    
 
-        antitarget_sum = sum(s for s in antitargets if s is not None)
+        antitarget_sum = sum(antitargets)
         antitarget_score = antitarget_sum / len(antitargets)
 
         final_score = target_score - antitarget_score
