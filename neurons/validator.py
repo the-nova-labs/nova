@@ -20,7 +20,7 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
 from config.config_loader import load_protein_selection_params
-from my_utils import get_smiles, get_sequence_from_protein_code, get_challenge_proteins_from_blockhash
+from my_utils import get_smiles, get_sequence_from_protein_code, get_heavy_atom_count, get_challenge_proteins_from_blockhash
 from PSICHIC.wrapper import PsichicWrapper
 from btdr import QuicknetBittensorDrandTimelock
 
@@ -246,6 +246,9 @@ def score_protein_for_all_uids(
 
         if not smiles:
             bt.logging.debug(f"No SMILES found for UID={uid}, molecule='{data['molecule']}'.")
+
+        elif get_heavy_atom_count(smiles) < config['min_heavy_atoms']:
+            bt.logging.info(f"UID: {uid}, SMILES: {smiles} has less than {config['min_heavy_atoms']} heavy atoms, scoring -inf")
 
         else:
             try:
