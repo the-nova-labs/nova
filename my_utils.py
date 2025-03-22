@@ -151,3 +151,29 @@ def get_challenge_proteins_from_blockhash(block_hash: str, num_targets: int, num
         "targets": targets,
         "antitargets": antitargets
     }
+
+def get_heavy_atom_count(smiles: str) -> int:
+    """
+    Calculate the number of heavy atoms in a molecule from its SMILES string.
+    """
+    count = 0
+    i = 0
+    while i < len(smiles):
+        c = smiles[i]
+        
+        if c.isalpha() and c.isupper():
+            elem_symbol = c
+            
+            # If the next character is a lowercase letter, include it (e.g., 'Cl', 'Br')
+            if i + 1 < len(smiles) and smiles[i + 1].islower():
+                elem_symbol += smiles[i + 1]
+                i += 1 
+            
+            # If it's not 'H', count it as a heavy atom
+            if elem_symbol != 'H':
+                count += 1
+        
+        i += 1
+    
+    return count
+    
