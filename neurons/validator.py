@@ -14,6 +14,7 @@ import hashlib
 import subprocess
 from dotenv import load_dotenv
 from bittensor.core.chain_data.utils import decode_metadata
+from config.config_loader import load_config
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
@@ -42,7 +43,8 @@ def get_config():
     node = SubstrateInterface(url=config.network)
     config.epoch_length = node.query("SubtensorModule", "Tempo", [config.netuid]).value
 
-    config.num_targets, config.num_antitargets = load_protein_selection_params()
+    # Load configuration options
+    config.update(load_config())
 
     return config
 
@@ -293,7 +295,7 @@ def determine_winner(
         antitarget_sum = sum(antitargets)
         antitarget_score = antitarget_sum / len(antitargets)
 
-        final_score = target_score - antitarget_score
+        final_score = (config['target_weight'] * target_score) - (config['antitarget_weight'] * antitarget_score)
 
         # Log details
         bt.logging.info(
