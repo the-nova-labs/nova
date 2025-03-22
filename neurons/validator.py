@@ -14,12 +14,11 @@ import hashlib
 import subprocess
 from dotenv import load_dotenv
 from bittensor.core.chain_data.utils import decode_metadata
-from config.config_loader import load_config
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
-from config.config_loader import load_protein_selection_params
+from config.config_loader import load_config
 from my_utils import get_smiles, get_sequence_from_protein_code, get_heavy_atom_count, get_challenge_proteins_from_blockhash
 from PSICHIC.wrapper import PsichicWrapper
 from btdr import QuicknetBittensorDrandTimelock
