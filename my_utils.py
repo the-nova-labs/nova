@@ -4,6 +4,7 @@ import json
 from dotenv import load_dotenv
 import bittensor as bt
 from datasets import load_dataset
+import random
 
 import asyncio
 
@@ -106,20 +107,73 @@ def get_sequence_from_protein_code(protein_code:str) -> str:
         amino_acid_sequence = ''.join(sequence_lines)
         return amino_acid_sequence
 
-def get_index_in_range_from_blockhash(block_hash: str, range_max: int) -> int:
+def get_challenge_proteins_from_blockhash(block_hash: str, num_targets: int, num_antitargets: int) -> dict:
+    """
+    Use block_hash as a seed to pick 'num_targets' and 'num_antitargets' random entries
+    from the 'Metanova/Proteins' dataset. Returns {'targets': [...], 'antitargets': [...]}.
+    """
+    if not (isinstance(block_hash, str) and block_hash.startswith("0x")):
+        raise ValueError("block_hash must start with '0x'.")
+    if num_targets < 0 or num_antitargets < 0:
+        raise ValueError("num_targets and num_antitargets must be non-negative.")
 
-    block_hash_str = block_hash.lower().removeprefix('0x')
+    # Convert block hash to an integer seed
+    try:
+        seed = int(block_hash[2:], 16)
+    except ValueError:
+        raise ValueError(f"Invalid hex in block_hash: {block_hash}")
+
+    # Initialize random number generator
+    rng = random.Random(seed)
+
+    # Load huggingface protein dataset
+    try:
+        dataset = load_dataset("Metanova/Proteins", split="train")
+    except Exception as e:
+        raise RuntimeError("Could not load the 'Metanova/Proteins' dataset.") from e
+
+    dataset_size = len(dataset)
+    if dataset_size == 0:
+        raise ValueError("Dataset is empty; cannot pick random entries.")
+
+    # Grab all required indices at once, ensure uniqueness
+    unique_indices = rng.sample(range(dataset_size), k=(num_targets + num_antitargets))
+
+    # Split the first 'num_targets' for targets, the rest for antitargets
+    target_indices = unique_indices[:num_targets]
+    antitarget_indices = unique_indices[num_targets:]
+
+    # Convert indices to protein codes
+    targets = [dataset[i]["Entry"] for i in target_indices]
+    antitargets = [dataset[i]["Entry"] for i in antitarget_indices]
+
+    return {
+        "targets": targets,
+        "antitargets": antitargets
+    }
+
+def get_heavy_atom_count(smiles: str) -> int:
+    """
+    Calculate the number of heavy atoms in a molecule from its SMILES string.
+    """
+    count = 0
+    i = 0
+    while i < len(smiles):
+        c = smiles[i]
+        
+        if c.isalpha() and c.isupper():
+            elem_symbol = c
+            
+            # If the next character is a lowercase letter, include it (e.g., 'Cl', 'Br')
+            if i + 1 < len(smiles) and smiles[i + 1].islower():
+                elem_symbol += smiles[i + 1]
+                i += 1 
+            
+            # If it's not 'H', count it as a heavy atom
+            if elem_symbol != 'H':
+                count += 1
+        
+        i += 1
     
-    # Convert the hex string to an integer
-    hash_int = int(block_hash_str, 16)
-
-    # Modulo by the desired range
-    random_index = hash_int % range_max
-
-    return random_index
-
-def get_protein_code_at_index(index: int) -> str:
+    return count
     
-    dataset = load_dataset("Metanova/Proteins", split="train")
-    row = dataset[index]  # 0-based indexing
-    return row["Entry"]
