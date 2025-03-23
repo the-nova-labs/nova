@@ -291,13 +291,16 @@ def determine_winner(
         antitargets = [-math.inf if s is None else s for s in antitargets]
 
         # Compute final score
-        target_sum = sum(targets)
-        target_score = target_sum / len(targets)    
+        if -math.inf not in targets and -math.inf not in antitargets:
+            target_sum = sum(targets)
+            target_score = target_sum / len(targets)
 
-        antitarget_sum = sum(antitargets)
-        antitarget_score = antitarget_sum / len(antitargets)
+            antitarget_sum = sum(antitargets)
+            antitarget_score = antitarget_sum / len(antitargets)
 
-        final_score = (config['target_weight'] * target_score) - (config['antitarget_weight'] * antitarget_score)
+            final_score = (config['target_weight'] * target_score) - (config['antitarget_weight'] * antitarget_score)
+        else:
+            final_score = -math.inf
 
         # Log details
         bt.logging.info(
