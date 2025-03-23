@@ -245,7 +245,7 @@ def score_protein_for_all_uids(
             smiles = get_smiles(data["molecule"])
         except Exception as e:
             bt.logging.error(f"Error getting SMILES for UID={uid}, molecule='{data['molecule']}': {e}")
-            continue
+            smiles = None
 
         if not smiles:
             bt.logging.debug(f"No SMILES found for UID={uid}, molecule='{data['molecule']}'.")
