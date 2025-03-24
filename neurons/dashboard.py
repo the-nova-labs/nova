@@ -281,7 +281,7 @@ def determine_winner(
 
             final_score = (config['target_weight'] * target_score) - (config['antitarget_weight'] * antitarget_score)
         else:
-            final_score = -math.inf
+            final_score = -10000.0
 
         submissions.append({
             "neuron": {
@@ -363,7 +363,7 @@ async def main(config):
 
                     bt.logging.info(f"Scoring using target proteins: {target_proteins}, antitarget proteins: {antitarget_proteins}")
                     competition = {
-                        "epoch_number": current_block // config.epoch_length,
+                        "epoch_number": current_block // config.epoch_length - 1,
                         "target_proteins": target_proteins,
                         "anti_target_proteins": antitarget_proteins,
                     }
@@ -436,7 +436,7 @@ async def main(config):
                     import json
                     import os
                     os.makedirs("results", exist_ok=True)
-                    epoch = current_block // config.epoch_length
+                    epoch = current_block // config.epoch_length - 1
                     results_file = f"results/submissions_epoch_{epoch}.json"   
                     with open(results_file, "w") as f:
                         json.dump({
