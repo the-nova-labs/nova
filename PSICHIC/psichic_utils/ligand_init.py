@@ -448,31 +448,40 @@ def tree_decomposition(
 def smiles2graph(m_str):
     mgd = MoleculeGraphDataset(halogen_detail=False)
     mol = Chem.MolFromSmiles(m_str)
+    if mol is None:
+        return None
     #mol = get_mol(m_str)
-    atom_feature, bond_feature = mgd.featurize(mol,'atom_full_feature')
-    atom_idx, _ = mgd.featurize(mol,'atom_type')
-    tree = mgd.junction_tree(mol)
+    try:
+        atom_feature, bond_feature = mgd.featurize(mol,'atom_full_feature')
+        atom_idx, _ = mgd.featurize(mol,'atom_type')
+        tree = mgd.junction_tree(mol)
 
-    out_dict = {
-        'smiles':m_str,
-        'atom_feature':torch.tensor(atom_feature),#.to(torch.int8),
-        'atom_types':'|'.join([i.GetSymbol() for i in mol.GetAtoms()]),
-        'atom_idx':torch.tensor(atom_idx),#.to(torch.int8),
-        'bond_feature':torch.tensor(bond_feature),#.to(torch.int8),
+        out_dict = {
+            'smiles':m_str,
+            'atom_feature':torch.tensor(atom_feature),#.to(torch.int8),
+            'atom_types':'|'.join([i.GetSymbol() for i in mol.GetAtoms()]),
+            'atom_idx':torch.tensor(atom_idx),#.to(torch.int8),
+            'bond_feature':torch.tensor(bond_feature),#.to(torch.int8),
 
-    }
-    tree['tree_edge_index'] = tree['tree_edge_index']#.to(torch.int8)
-    tree['atom2clique_index'] = tree['atom2clique_index']#.to(torch.int8)
-    tree['x_clique'] = tree['x_clique']#.to(torch.int8)
+        }
+        tree['tree_edge_index'] = tree['tree_edge_index']#.to(torch.int8)
+        tree['atom2clique_index'] = tree['atom2clique_index']#.to(torch.int8)
+        tree['x_clique'] = tree['x_clique']#.to(torch.int8)
 
-    out_dict.update(tree)
-    
-    return out_dict 
+        out_dict.update(tree)
+        
+        return out_dict 
+    except Exception as e:
+        return None
 ####
+
 
 def ligand_init(smiles_list):
     ligand_dict = {}
     for smiles in tqdm(smiles_list):
-        ligand_dict[smiles] = smiles2graph(smiles)
-
+        graph = smiles2graph(smiles)
+        if graph is None:
+            print(f"Error: {smiles} is an invalid SMILES string")
+            continue
+        ligand_dict[smiles] = graph
     return ligand_dict

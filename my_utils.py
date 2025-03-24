@@ -4,12 +4,13 @@ import json
 from dotenv import load_dotenv
 import bittensor as bt
 from datasets import load_dataset
+import random
 
 import asyncio
 
 load_dotenv(override=True)
 
-def upload_file_to_github(target_protein: str, antitarget_protein: str, encoded_content: str):
+def upload_file_to_github(filename: str, encoded_content: str):
     # Github configs
     github_repo_name = os.environ.get('GITHUB_REPO_NAME')   # example: nova
     github_repo_branch = os.environ.get('GITHUB_REPO_BRANCH') # example: main
@@ -20,7 +21,7 @@ def upload_file_to_github(target_protein: str, antitarget_protein: str, encoded_
     if not github_repo_name or not github_repo_branch or not github_token or not github_repo_owner:
         raise ValueError("Github environment variables not set. Please set them in your .env file.")
 
-    target_file_path = os.path.join(github_repo_path, f'{target_protein}_{antitarget_protein}.txt')
+    target_file_path = os.path.join(github_repo_path, f'{filename}.txt')
     url = f"https://api.github.com/repos/{github_repo_owner}/{github_repo_name}/contents/{target_file_path}"
     headers = {
         "Authorization": f"Bearer {github_token}",
@@ -32,7 +33,7 @@ def upload_file_to_github(target_protein: str, antitarget_protein: str, encoded_
     sha = existing_file.json().get("sha") if existing_file.status_code == 200 else None
 
     payload = {
-        "message": f"Encrypted response for {target_protein}_{antitarget_protein}",
+        "message": f"Encrypted response for {filename}",
         "content": encoded_content,
         "branch": github_repo_branch,
     }
@@ -43,7 +44,7 @@ def upload_file_to_github(target_protein: str, antitarget_protein: str, encoded_
     if response.status_code in [200, 201]:
         return True
     else:
-        bt.logging.error(f"Failed to upload file for {target_protein}_{antitarget_protein}: {response.status_code} {response.text}")
+        bt.logging.error(f"Failed to upload file for {filename}: {response.status_code} {response.text}")
         return False
 
 
@@ -106,47 +107,73 @@ def get_sequence_from_protein_code(protein_code:str) -> str:
         amino_acid_sequence = ''.join(sequence_lines)
         return amino_acid_sequence
 
-def get_index_in_range_from_blockhash(block_hash: str, range_max: int) -> int:
+def get_challenge_proteins_from_blockhash(block_hash: str, num_targets: int, num_antitargets: int) -> dict:
+    """
+    Use block_hash as a seed to pick 'num_targets' and 'num_antitargets' random entries
+    from the 'Metanova/Proteins' dataset. Returns {'targets': [...], 'antitargets': [...]}.
+    """
+    if not (isinstance(block_hash, str) and block_hash.startswith("0x")):
+        raise ValueError("block_hash must start with '0x'.")
+    if num_targets < 0 or num_antitargets < 0:
+        raise ValueError("num_targets and num_antitargets must be non-negative.")
 
-    block_hash_str = block_hash.lower().removeprefix('0x')
-    
-    # Convert the hex string to an integer
-    hash_int = int(block_hash_str, 16)
-
-    # Modulo by the desired range
-    random_index = hash_int % range_max
-
-    return random_index
-
-def get_protein_code_at_index(index: int) -> str:
-    
-    dataset = load_dataset("Metanova/Proteins", split="train")
-    row = dataset[index]  # 0-based indexing
-    return row["Entry"]
-
-def submit_results(miner_submissions_request: dict):
+    # Convert block hash to an integer seed
     try:
-        api_token = os.environ.get("API_TOKEN")
-        if not api_token:
-            raise ValueError("API_TOKEN environment variable not set.")
+        seed = int(block_hash[2:], 16)
+    except ValueError:
+        raise ValueError(f"Invalid hex in block_hash: {block_hash}")
 
-        dashboard_backend_url = os.environ.get("DASHBOARD_BACKEND_URL")
-        if not dashboard_backend_url:
-            raise ValueError("DASHBOARD_BACKEND_URL environment variable not set.")
+    # Initialize random number generator
+    rng = random.Random(seed)
 
-        url = dashboard_backend_url + "/api/submit_results"
-        headers = {
-            "Authorization": f"Bearer {api_token}",
-            "Content-Type": "application/json"
-        }
-        response = requests.post(url, json=miner_submissions_request, headers=headers)
-        if response.status_code != 200:
-            bt.logging.error(f"Error submitting results: {response.status_code} {response.text}")
-            return
-        response_json = response.json()
-        if response_json.get("success"):
-            bt.logging.success(f"Results submitted successfully")
-        else:
-            bt.logging.error(f"Error submitting results")
+    # Load huggingface protein dataset
+    try:
+        dataset = load_dataset("Metanova/Proteins", split="train")
     except Exception as e:
-        bt.logging.error(f"Error submitting results: {e}")
+        raise RuntimeError("Could not load the 'Metanova/Proteins' dataset.") from e
+
+    dataset_size = len(dataset)
+    if dataset_size == 0:
+        raise ValueError("Dataset is empty; cannot pick random entries.")
+
+    # Grab all required indices at once, ensure uniqueness
+    unique_indices = rng.sample(range(dataset_size), k=(num_targets + num_antitargets))
+
+    # Split the first 'num_targets' for targets, the rest for antitargets
+    target_indices = unique_indices[:num_targets]
+    antitarget_indices = unique_indices[num_targets:]
+
+    # Convert indices to protein codes
+    targets = [dataset[i]["Entry"] for i in target_indices]
+    antitargets = [dataset[i]["Entry"] for i in antitarget_indices]
+
+    return {
+        "targets": targets,
+        "antitargets": antitargets
+    }
+
+def get_heavy_atom_count(smiles: str) -> int:
+    """
+    Calculate the number of heavy atoms in a molecule from its SMILES string.
+    """
+    count = 0
+    i = 0
+    while i < len(smiles):
+        c = smiles[i]
+        
+        if c.isalpha() and c.isupper():
+            elem_symbol = c
+            
+            # If the next character is a lowercase letter, include it (e.g., 'Cl', 'Br')
+            if i + 1 < len(smiles) and smiles[i + 1].islower():
+                elem_symbol += smiles[i + 1]
+                i += 1 
+            
+            # If it's not 'H', count it as a heavy atom
+            if elem_symbol != 'H':
+                count += 1
+        
+        i += 1
+    
+    return count
+    
