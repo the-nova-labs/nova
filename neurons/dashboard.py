@@ -431,6 +431,21 @@ async def main(config):
                     "competition": competition,
                     "submissions": submissions
                 })
+
+                try:
+                    import json
+                    import os
+                    os.makedirs("results", exist_ok=True)
+                    epoch = current_block // config.epoch_length
+                    results_file = f"results/submissions_epoch_{epoch}.json"   
+                    with open(results_file, "w") as f:
+                        json.dump({
+                            "competition": competition,
+                            "submissions": submissions
+                        }, f, indent=4)
+                    bt.logging.success(f"Results saved to {results_file}")
+                except Exception as e:
+                    bt.logging.error(f"Error saving results to file: {e}")
             # keep validator alive
             elif current_block % (config.epoch_length/2) == 0:
                 subtensor = bt.async_subtensor(network=config.network)
