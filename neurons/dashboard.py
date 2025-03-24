@@ -365,7 +365,7 @@ async def main(config):
                     competition = {
                         "epoch_number": current_block // config.epoch_length,
                         "target_proteins": target_proteins,
-                        "antitarget_proteins": antitarget_proteins,
+                        "anti_target_proteins": antitarget_proteins,
                     }
 
                 except Exception as e:
