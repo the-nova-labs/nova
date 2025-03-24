@@ -1,6 +1,5 @@
-from my_utils import submit_results
+from submit_results import submit_results
 import json
-
 
 def submit_results_mannual(epoch_number: int):
     with open(f"results/submissions_epoch_{epoch_number}.json", "r") as f:

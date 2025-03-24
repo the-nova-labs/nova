@@ -1,12 +1,11 @@
 import asyncio
-import json
 from ast import literal_eval
 import math
 import os
 import sys
 import argparse
 import binascii
-from typing import cast
+from typing import cast, Optional
 from types import SimpleNamespace
 import bittensor as bt
 from substrateinterface import SubstrateInterface
@@ -16,16 +15,15 @@ import subprocess
 from dotenv import load_dotenv
 from bittensor.core.chain_data.utils import decode_metadata
 
+
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
-from my_utils import (
-    get_smiles, 
-    get_sequence_from_protein_code, 
-    submit_results
-)
+from config.config_loader import load_config
+from my_utils import get_smiles, get_sequence_from_protein_code, get_heavy_atom_count, get_challenge_proteins_from_blockhash
 from PSICHIC.wrapper import PsichicWrapper
 from btdr import QuicknetBittensorDrandTimelock
+from submit_results import submit_results
 
 psichic = PsichicWrapper()
 btd = QuicknetBittensorDrandTimelock()
@@ -41,6 +39,9 @@ def get_config():
     node = SubstrateInterface(url=config.network)
     config.epoch_length = node.query("SubtensorModule", "Tempo", [config.netuid]).value
 
+    # Load configuration options
+    config.update(load_config())
+
     return config
 
 def setup_logging(config):
@@ -54,54 +55,6 @@ def setup_logging(config):
 
     bt.logging.info(f"Running validator for subnet: {config.netuid} on network: {config.subtensor.network} with config:")
     bt.logging.info(config)
-
-def run_model(protein: str, molecule: str) -> float:
-    """
-    Given a protein sequence (protein) and a molecule identifier (molecule),
-    retrieves its SMILES string, then uses the PsichicWrapper to produce
-    a predicted binding score. Returns 0.0 if SMILES not found or if
-    there's any issue with scoring.
-    """
-
-    # Initialize PSICHIC for new protein
-    bt.logging.info(f'Initializing model for protein sequence: {protein}')
-    try:
-        psichic.run_challenge_start(protein)
-        bt.logging.info('Model initialized successfully.')
-    except Exception as e:
-        try:
-            os.system(f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/PDBv2020_PSICHIC/model.pt')} https://huggingface.co/Metanova/PSICHIC/resolve/main/model.pt")
-            psichic.run_challenge_start(protein)
-            bt.logging.info('Model initialized successfully.')
-        except Exception as e:
-            bt.logging.error(f'Error initializing model: {e}')
-
-
-    smiles = get_smiles(molecule)
-    if not smiles:
-        bt.logging.debug(f"Could not retrieve SMILES for '{molecule}', returning score of 0.0.")
-        raise Exception(f"Could not retrieve SMILES for '{molecule}'")
-
-    results_df = psichic.run_validation([smiles])  # returns a DataFrame
-    if results_df.empty:
-        bt.logging.warning("Psichic returned an empty DataFrame, returning 0.0.")
-        raise Exception("Psichic returned an empty DataFrame")
-
-    predicted_score = results_df.iloc[0]['predicted_binding_affinity']
-    if predicted_score is None:
-        bt.logging.warning("No 'predicted_binding_affinity' found, returning 0.0.")
-        raise Exception("No 'predicted_binding_affinity' found")
-
-    return float(predicted_score)
-
-def run_model_difference(target_sequence: str, antitarget_sequence: str, molecule: str) -> float:
-    """
-    Compute final_score = binding_affinity(target) - binding_affinity(anti-target)
-    """
-    s_target = run_model(protein=target_sequence, molecule=molecule)
-    s_anti   = run_model(protein=antitarget_sequence, molecule=molecule)
-    return s_target - s_anti
-
 
 async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int) -> dict:
     """
@@ -143,7 +96,8 @@ async def get_commitments(subtensor, metagraph, block_hash: str, netuid: int) ->
 def tuple_safe_eval(input_str: str) -> tuple:
     # Limit input size to prevent overly large inputs.
     if len(input_str) > 1024:
-        raise ValueError("Input exceeds allowed size")
+        bt.logging.error("Input exceeds allowed size")
+        return None
     
     try:
         # Safely evaluate the input string as a Python literal.
@@ -192,40 +146,182 @@ def decrypt_submissions(current_commitments: dict, headers: dict = {"Range": "by
     """
     encrypted_submissions = {}
     for commit in current_commitments.values():
-        if '/' not in commit.data:
-            continue
-        try:
-            full_url = f"https://raw.githubusercontent.com/{commit.data}"
-            response = requests.get(full_url, headers=headers)
-            if response.status_code in [200, 206]:
-                encrypted_content = response.content
-                content_hash = hashlib.sha256(encrypted_content.decode('utf-8').encode('utf-8')).hexdigest()[:20]
+        if '/' in commit.data: # Filter only url submissions
+            try:
+                full_url = f"https://raw.githubusercontent.com/{commit.data}"
+                response = requests.get(full_url, headers=headers)
+                if response.status_code in [200, 206]:
+                    encrypted_content = response.content
+                    content_hash = hashlib.sha256(encrypted_content.decode('utf-8').encode('utf-8')).hexdigest()[:20]
 
-                # Disregard any submissions that don't match the expected filename
-                if not full_url.endswith(f'/{content_hash}.txt'):
-                    bt.logging.error(f"Filename for {commit.uid} is not compatible with expected content hash")
-                    continue
-                encrypted_content = encrypted_content.decode('utf-8', errors='replace')
+                    # Disregard any submissions that don't match the expected filename
+                    if not full_url.endswith(f'/{content_hash}.txt'):
+                        bt.logging.error(f"Filename for {commit.uid} is not compatible with expected content hash")
+                        continue
+                    encrypted_content = encrypted_content.decode('utf-8', errors='replace')
 
-                # Safely evaluate the input string as a Python literal.
-                encrypted_content = tuple_safe_eval(encrypted_content)
-                if encrypted_content is None:
-                    bt.logging.error(f"Encrypted content for {commit.uid} is not a tuple")
+                    # Safely evaluate the input string as a Python literal.
+                    encrypted_content = tuple_safe_eval(encrypted_content)
+                    if encrypted_content is None:
+                        bt.logging.error(f"Encrypted content for {commit.uid} is not a tuple")
+                        continue
+
+                    encrypted_submissions[commit.uid] = (encrypted_content[0], encrypted_content[1])
+                else:
+                    bt.logging.error(f"Error fetching encrypted submission: {response.status_code}")
+                    bt.logging.error(f"uid: {commit.uid}, commited data: {commit.data}")
                     continue
-                encrypted_submissions[commit.uid] = (encrypted_content[0], encrypted_content[1])
-            else:
-                bt.logging.error(f"Error fetching encrypted submission: {response.status_code}")
-                bt.logging.error(f"uid: {commit.uid}, commited data: {commit.data}")
+            except Exception as e:
+                bt.logging.error(f"Error handling submission for uid {commit.uid}: {e}")
                 continue
-        except Exception as e:
-            bt.logging.error(f"Error decrypting submission: {e}")
-            continue
 
     bt.logging.info(f"Encrypted submissions: {len(encrypted_submissions)}")
-    decrypted_submissions = btd.decrypt_dict(encrypted_submissions)
+    
+    try:
+        decrypted_submissions = btd.decrypt_dict(encrypted_submissions)
+    except Exception as e:
+        bt.logging.error(f"Failed to decrypt submissions: {e}")
+        decrypted_submissions = {}
+
     bt.logging.info(f"Decrypted submissions: {len(decrypted_submissions)}")
             
     return decrypted_submissions
+
+def score_protein_for_all_uids(
+    protein: str,
+    score_dict: dict[int, dict[str, list[float]]],
+    uid_to_data: dict[int, dict[str, str]],
+    col_idx: int,
+    is_target: bool = True
+) -> None:
+    """
+    Initialize PSICHIC once for 'protein' and score each UID's molecule, 
+    storing results in the appropriate (target or antitarget) index of 'score_dict'.
+    """
+    # Initialize PSICHIC for new protein
+    bt.logging.info(f'Initializing model for protein code: {protein}')
+    protein_sequence = get_sequence_from_protein_code(protein)
+    try:
+        psichic.run_challenge_start(protein_sequence)
+        bt.logging.info('Model initialized successfully.')
+    except Exception as e:
+        try:
+            os.system(f"wget -O {os.path.join(BASE_DIR, 'PSICHIC/trained_weights/PDBv2020_PSICHIC/model.pt')} https://huggingface.co/Metanova/PSICHIC/resolve/main/model.pt")
+            psichic.run_challenge_start(protein_sequence)
+            bt.logging.info('Model initialized successfully.')
+        except Exception as e:
+            bt.logging.error(f'Error initializing model: {e}')
+            for uid in uid_to_data:
+                score_dict[uid]["target_scores" if is_target else "antitarget_scores"][col_idx] = -math.inf
+            return # If we can't initialize set all scores to -inf
+
+    # Score each UID's molecule
+    for uid, data in uid_to_data.items():
+        score_value = -math.inf
+        try:
+            smiles = get_smiles(data["molecule"])
+        except Exception as e:
+            bt.logging.error(f"Error getting SMILES for UID={uid}, molecule='{data['molecule']}': {e}")
+            smiles = None
+
+        if not smiles:
+            bt.logging.debug(f"No SMILES found for UID={uid}, molecule='{data['molecule']}'.")
+
+        elif get_heavy_atom_count(smiles) < config['min_heavy_atoms']:
+            bt.logging.info(f"UID: {uid}, SMILES: {smiles} has less than {config['min_heavy_atoms']} heavy atoms, scoring -inf")
+
+        else:
+            try:
+                results_df = psichic.run_validation([smiles])
+                if not results_df.empty:
+                    val = results_df.iloc[0].get('predicted_binding_affinity')
+                    score_value = float(val) if val is not None else -math.inf
+                else:
+                    bt.logging.warning(f"PSICHIC returned an empty DataFrame for UID={uid}.")
+            except Exception as e:
+                bt.logging.error(f"Error scoring UID={uid}, molecule='{data['molecule']}': {e}")
+
+        # Store the score in the correct list
+        if is_target:
+            score_dict[uid]["target_scores"][col_idx] = score_value
+        else:
+            score_dict[uid]["antitarget_scores"][col_idx] = score_value
+
+
+def determine_winner(
+    score_dict: dict[int, dict[str, list[float]]],
+    uid_to_data: dict[int, dict[str, int]]
+) -> Optional[int]:
+    """
+    Logs target/antitarget scores for each UID, applies tie-breaking by earliest
+    submission block on a final score tie, and returns the winning UID.
+    Returns None if no valid scores are found.
+    """
+    best_score = -math.inf
+    best_uid = None
+    best_block_submitted = math.inf  # Track earliest block in tie-break
+    submissions = []
+    # Go through each UID scored
+    for uid, data in uid_to_data.items():
+        targets = score_dict[uid]['target_scores']
+        antitargets = score_dict[uid]['antitarget_scores']
+        submission_block = data["block_submitted"]
+
+        # Replace None with -inf
+        targets = [-math.inf if s is None else s for s in targets]
+        antitargets = [-math.inf if s is None else s for s in antitargets]
+
+        # Compute final score
+        if -math.inf not in targets and -math.inf not in antitargets:
+            target_sum = sum(targets)
+            target_score = target_sum / len(targets)
+
+            antitarget_sum = sum(antitargets)
+            antitarget_score = antitarget_sum / len(antitargets)
+
+            final_score = (config['target_weight'] * target_score) - (config['antitarget_weight'] * antitarget_score)
+        else:
+            final_score = -math.inf
+
+        submissions.append({
+            "neuron": {
+                "hotkey": data["hotkey"],
+            },
+            "block_number": submission_block,
+            "molecule": data["molecule"],
+            "score": final_score,
+        })
+
+        # Log details
+        bt.logging.info(
+            f"UID={uid} -> target_scores={targets}, "
+            f"antitarget_scores={antitargets}, "
+            f"final_score={final_score}, "
+            f"block_submitted={submission_block}"
+        )
+
+        # Tie-break: higher final_score, or if tie, earlier block_submitted
+        if final_score > best_score:
+            best_score = final_score
+            best_uid = uid
+            best_block_submitted = submission_block
+        elif final_score == best_score and submission_block < best_block_submitted:
+            best_uid = uid
+            best_block_submitted = submission_block
+
+    # Log final result
+    if best_uid is not None and best_score != -math.inf:
+        bt.logging.info(
+            f"Winner: UID={best_uid}, "
+            f"molecule={uid_to_data[best_uid]['molecule']}, "
+            f"SMILES={get_smiles(uid_to_data[best_uid]['molecule'])}, "
+            f"block_submitted={best_block_submitted}, "
+            f"winning_score={best_score}"
+        )
+    else:
+        bt.logging.info("No valid winner found (all scores -inf or no submissions).")
+
+    return submissions
 
 
 async def main(config):
@@ -235,6 +331,7 @@ async def main(config):
         - Retrieving past commitments.
         - Selecting the best protein/molecule pairing based on stakes and scores.
         - Setting new weights accordingly.
+
     """
 
     # Initialize the asynchronous subtensor client.
@@ -244,113 +341,109 @@ async def main(config):
     tolerance = 3 # block tolerance window for validators to commit protein
 
     while True:
-        # Fetch the current metagraph for the given subnet (netuid 68).
-        metagraph = await subtensor.metagraph(config.netuid)
-        current_block = await subtensor.get_current_block()
+        try:
+            # Fetch the current metagraph for the given subnet (netuid 68).
+            metagraph = await subtensor.metagraph(config.netuid)
+            current_block = await subtensor.get_current_block()
 
-        # Check if the current block marks the end of an epoch (using a 360-block interval).
-        if current_block % config.epoch_length == 0:            # Retrieve commitments from the previous epoch.
-            bt.logging.info(f"Committing for epoch {current_block // config.epoch_length - 1}")
-            prev_epoch = current_block - config.epoch_length
-            best_stake = -math.inf
-            current_protein = None
+            # Check if the current block marks the end of an epoch (using a 360-block interval).
+            if current_block % config.epoch_length == 0:
 
-            block_to_check = prev_epoch
-            block_hash_to_check = await subtensor.determine_block_hash(block_to_check + tolerance)  
-            epoch_metagraph = await subtensor.metagraph(config.netuid, block=block_to_check + tolerance)
-            epoch_commitments = await get_commitments(subtensor, epoch_metagraph, block_hash_to_check, netuid=config.netuid)
-            epoch_commitments = {k: v for k, v in epoch_commitments.items() if current_block - v.block <= (config.epoch_length + tolerance)}
-            
-            high_stake_protein_commitment = max(
-                epoch_commitments.values(),
-                key=lambda commit: epoch_metagraph.S[commit.uid],
-                default=None
-            )
-            if not high_stake_protein_commitment:
-                bt.logging.error("Error getting current protein commitment.")
-                current_protein = None
-                continue
+                try:
+                    start_block = current_block - config.epoch_length
+                    start_block_hash = await subtensor.determine_block_hash(start_block)
 
-            protein_codes = high_stake_protein_commitment.data.split('|')
-            target_protein_code = protein_codes[0]
-            antitarget_protein_code = protein_codes[1]
-            bt.logging.info(f"Current target protein: {target_protein_code}, antitarget: {antitarget_protein_code}")
+                    proteins = get_challenge_proteins_from_blockhash(
+                        block_hash=start_block_hash,
+                        num_targets=config.num_targets,
+                        num_antitargets=config.num_antitargets
+                    )
+                    target_proteins = proteins["targets"]
+                    antitarget_proteins = proteins["antitargets"]
 
-            target_protein_sequence = get_sequence_from_protein_code(target_protein_code)
-            antitarget_protein_sequence = get_sequence_from_protein_code(antitarget_protein_code)
+                    bt.logging.info(f"Scoring using target proteins: {target_proteins}, antitarget proteins: {antitarget_proteins}")
+                    competition = {
+                        "epoch_number": current_block // config.epoch_length,
+                        "target_proteins": target_proteins,
+                        "antitarget_proteins": antitarget_proteins,
+                    }
 
-            # Retrieve the latest commitments (current epoch).
-            current_block_hash = await subtensor.determine_block_hash(current_block)
-            current_commitments = await get_commitments(subtensor, metagraph, current_block_hash, netuid=config.netuid)
-            bt.logging.debug(f"Current commitments: {len(list(current_commitments.values()))}")
+                except Exception as e:
+                    bt.logging.error(f"Error generating challenge proteins: {e}")
+                    continue
+                
+                # Retrieve the latest commitments (current epoch).
+                current_block_hash = await subtensor.determine_block_hash(current_block)
+                current_commitments = await get_commitments(subtensor, metagraph, current_block_hash, netuid=config.netuid)
+                bt.logging.debug(f"Current commitments: {len(list(current_commitments.values()))}")
 
-            # Decrypt submissions
-            decrypted_submissions = decrypt_submissions(current_commitments)
+                # Decrypt submissions
+                decrypted_submissions = decrypt_submissions(current_commitments)
 
-            # Identify the best molecule based on the scoring function.
-            best_score = -math.inf
-            total_commits = 0
-            best_molecule = None
-            epoch_number = current_block // config.epoch_length - 1
-            competition = {
-                "epoch_number": epoch_number,
-                "target_protein": target_protein_code,
-                "anti_target_protein": antitarget_protein_code,
-            }
-            submissions = []
-            for hotkey, commit in current_commitments.items():
-                if current_block - commit.block <= config.epoch_length:
-                    # Find the decrypted submission for the current commitment
-                    try:    
-                        molecule = decrypted_submissions[commit.uid]
-                        total_commits += 1
-                    except Exception as e:
-                        bt.logging.error(f"Decrypted submission for {commit.uid} not found: {e}")
-                        continue
-                    try:
-                        score = run_model_difference(target_protein_sequence, antitarget_protein_sequence, molecule)
-                        score = round(score, 3)
-                    except Exception as e:
-                        bt.logging.error(
-                            f"Error scoring molecule {molecule}: {e}"
-                            f"Uid: {commit.uid}"
-                            f"Hotkey: {hotkey}"
-                        )
-                        score = -9000.0
-                    submissions.append({
-                        "neuron": {
-                            "hotkey": hotkey,
-                        },
-                        "block_number": commit.block,
-                        "molecule": molecule,
-                        "score": score,
-                    })
-            
-            submit_results({
-                "competition": competition,
-                "submissions": submissions,
-            })
-            
-            try:
-                save_file_path = f"results/submissions_epoch_{epoch_number}.json"
-                submissions.sort(key=lambda x: (x['score'], -x['block_number']), reverse=True)
-                with open(save_file_path, 'w') as f:
-                    json.dump({
-                        "competition": competition,
-                        "submissions": submissions,
-                    }, f, indent=4)
-            except Exception as e:
-                bt.logging.error(f"Error saving submissions: {e}")
-            await asyncio.sleep(1)
-        # keep validator alive
-        elif current_block % (config.epoch_length/2) == 0:
-            subtensor = bt.async_subtensor(network=config.network)
-            await subtensor.initialize()
-            bt.logging.info("Validator reset subtensor connection.")
-            await asyncio.sleep(12) # Sleep for 1 block to avoid unncessary re-connection
+                uid_to_data = {}
+                for hotkey, commit in current_commitments.items():
+                    # Ensure submission is from the current epoch
+                    if current_block - commit.block <= config.epoch_length:
+                        uid = commit.uid
+                        molecule = decrypted_submissions.get(uid)
+                        if molecule is not None:
+                            uid_to_data[uid] = {
+                                "molecule": molecule,
+                                "block_submitted": commit.block,
+                                "hotkey": hotkey,
+                            }
+                        else:
+                            bt.logging.error(f"No decrypted submission found for UID: {uid}")
 
-        else:
-            await asyncio.sleep(1)
+                if not uid_to_data:
+                    bt.logging.info("No valid submissions found this epoch.")
+                    await asyncio.sleep(1)
+                    continue
+
+                score_dict = {
+                    uid: {
+                        "target_scores": [None] * len(target_proteins),
+                        "antitarget_scores": [None] * len(antitarget_proteins)
+                    }
+                    for uid in uid_to_data
+                }
+
+                # Score all target proteins then all antitarget proteins one protein at a time
+                for i, target_protein in enumerate(target_proteins):
+                    score_protein_for_all_uids(
+                        protein=target_protein,
+                        score_dict=score_dict,
+                        uid_to_data=uid_to_data,
+                        col_idx=i,
+                        is_target=True
+                    )
+                for j, anti_protein in enumerate(antitarget_proteins):
+                    score_protein_for_all_uids(
+                        protein=anti_protein,
+                        score_dict=score_dict,
+                        uid_to_data=uid_to_data,
+                        col_idx=j,
+                        is_target=False
+                    )
+
+                submissions = determine_winner(score_dict, uid_to_data)
+                submit_results({
+                    "competition": competition,
+                    "submissions": submissions
+                })
+            # keep validator alive
+            elif current_block % (config.epoch_length/2) == 0:
+                subtensor = bt.async_subtensor(network=config.network)
+                await subtensor.initialize()
+                bt.logging.info("Validator reset subtensor connection.")
+                await asyncio.sleep(12) # Sleep for 1 block to avoid unncessary re-connection
+                
+            else:
+                #bt.logging.info(f"Waiting for epoch to end... {config.epoch_length - (current_block % config.epoch_length)} blocks remaining.")
+                await asyncio.sleep(1)
+        except Exception as e:
+            bt.logging.error(f"Error in main loop: {e}")
+            await asyncio.sleep(3)
 
 
 if __name__ == "__main__":
