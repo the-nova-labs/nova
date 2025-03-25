@@ -343,12 +343,17 @@ async def main(config):
     while True:
         try:
             # Fetch the current metagraph for the given subnet (netuid 68).
-            metagraph = await subtensor.metagraph(config.netuid)
-            current_block = await subtensor.get_current_block()
-
+            try:
+                current_block = await subtensor.get_current_block()
+            except Exception as e:
+                raise Exception(f"Error fetching current block: {e}")
+            
             # Check if the current block marks the end of an epoch (using a 360-block interval).
             if current_block % config.epoch_length == 0:
-
+                try:
+                    metagraph = await subtensor.metagraph(config.netuid)
+                except Exception as e:
+                    raise Exception(f"Error fetching metagraph: {e}")
                 try:
                     start_block = current_block - config.epoch_length
                     start_block_hash = await subtensor.determine_block_hash(start_block)
@@ -446,13 +451,14 @@ async def main(config):
                     bt.logging.success(f"Results saved to {results_file}")
                 except Exception as e:
                     bt.logging.error(f"Error saving results to file: {e}")
+                    
+                await asyncio.sleep(12)
             # keep validator alive
             elif current_block % (config.epoch_length/2) == 0:
                 subtensor = bt.async_subtensor(network=config.network)
                 await subtensor.initialize()
                 bt.logging.info("Validator reset subtensor connection.")
-                await asyncio.sleep(12) # Sleep for 1 block to avoid unncessary re-connection
-                
+                await asyncio.sleep(12) # Sleep for 1 block to avoid unncessary re-connection            
             else:
                 #bt.logging.info(f"Waiting for epoch to end... {config.epoch_length - (current_block % config.epoch_length)} blocks remaining.")
                 await asyncio.sleep(1)
