@@ -96,6 +96,7 @@ def get_random_protein():
 
 def get_sequence_from_protein_code(protein_code:str) -> str:
     num_retries = 4
+    backoff_time = 10
     for _ in range(num_retries):
         url = f"https://rest.uniprot.org/uniprotkb/{protein_code}.fasta"
         response = requests.get(url)
@@ -106,7 +107,8 @@ def get_sequence_from_protein_code(protein_code:str) -> str:
             return amino_acid_sequence
         else:
             bt.logging.error(f"Failed to get sequence for {protein_code}: {response.status_code} {response.text}")
-            time.sleep(10)
+            time.sleep(backoff_time)
+            backoff_time *= 2
             continue
     return None
 
