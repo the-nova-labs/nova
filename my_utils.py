@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import bittensor as bt
 from datasets import load_dataset
 import random
-
+import time
 import asyncio
 
 load_dotenv(override=True)
@@ -95,17 +95,20 @@ def get_random_protein():
         bt.logging.error("Unexpected API response structure.")
 
 def get_sequence_from_protein_code(protein_code:str) -> str:
-
-    url = f"https://rest.uniprot.org/uniprotkb/{protein_code}.fasta"
-    response = requests.get(url)
-
-    if response.status_code != 200:
-        return None
-    else:
-        lines = response.text.splitlines()
-        sequence_lines = [line.strip() for line in lines if not line.startswith('>')]
-        amino_acid_sequence = ''.join(sequence_lines)
-        return amino_acid_sequence
+    num_retries = 4
+    for _ in range(num_retries):
+        url = f"https://rest.uniprot.org/uniprotkb/{protein_code}.fasta"
+        response = requests.get(url)
+        if response.status_code == 200:
+            lines = response.text.splitlines()
+            sequence_lines = [line.strip() for line in lines if not line.startswith('>')]
+            amino_acid_sequence = ''.join(sequence_lines)
+            return amino_acid_sequence
+        else:
+            bt.logging.error(f"Failed to get sequence for {protein_code}: {response.status_code} {response.text}")
+            time.sleep(10)
+            continue
+    return None
 
 def get_challenge_proteins_from_blockhash(block_hash: str, num_targets: int, num_antitargets: int) -> dict:
     """
