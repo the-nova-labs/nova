@@ -56,7 +56,10 @@ class PsichicWrapper:
                                    )
         
     def initialize_protein(self, protein_seq:str) -> dict:
-        self.protein_seq = [protein_seq]
+        allowed_chars = set(['A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y', 'X'])
+        sanitized_protein_seq = ''.join([aa if aa in allowed_chars else 'X' for aa in protein_seq])
+        self.protein_seq = [sanitized_protein_seq]
+
         protein_dict = protein_init(self.protein_seq)
         return protein_dict
     
