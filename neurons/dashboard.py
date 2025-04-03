@@ -323,6 +323,110 @@ def determine_winner(
 
     return submissions
 
+async def score_epoch(subtensor, epoch_number):
+    current_block = epoch_number * config.epoch_length
+    try:
+        metagraph = await subtensor.metagraph(config.netuid)
+    except Exception as e:
+        raise Exception(f"Error fetching metagraph: {e}")
+    
+    try:
+        start_block = current_block - config.epoch_length
+        start_block_hash = await subtensor.determine_block_hash(start_block)
+
+        proteins = get_challenge_proteins_from_blockhash(
+            block_hash=start_block_hash,
+            num_targets=config.num_targets,
+            num_antitargets=config.num_antitargets
+        )
+        target_proteins = proteins["targets"]
+        antitarget_proteins = proteins["antitargets"]
+
+        bt.logging.info(f"Scoring using target proteins: {target_proteins}, antitarget proteins: {antitarget_proteins}")
+        competition = {
+            "epoch_number": current_block // config.epoch_length - 1,
+            "target_proteins": target_proteins,
+            "anti_target_proteins": antitarget_proteins,
+        }
+
+    except Exception as e:
+        bt.logging.error(f"Error generating challenge proteins: {e}")
+        return
+    
+    # Retrieve the latest commitments (current epoch).
+    current_block_hash = await subtensor.determine_block_hash(current_block)
+    current_commitments = await get_commitments(subtensor, metagraph, current_block_hash, netuid=config.netuid)
+    bt.logging.debug(f"Current commitments: {len(list(current_commitments.values()))}")
+
+    # Decrypt submissions
+    decrypted_submissions = decrypt_submissions(current_commitments)
+
+    uid_to_data = {}
+    for hotkey, commit in current_commitments.items():
+        # Ensure submission is from the current epoch
+        if current_block - commit.block <= config.epoch_length:
+            uid = commit.uid
+            molecule = decrypted_submissions.get(uid)
+            if molecule is not None:
+                uid_to_data[uid] = {
+                    "molecule": molecule,
+                    "block_submitted": commit.block,
+                    "hotkey": hotkey,
+                }
+            else:
+                bt.logging.error(f"No decrypted submission found for UID: {uid}")
+
+    if not uid_to_data:
+        bt.logging.info("No valid submissions found this epoch.")
+        await asyncio.sleep(1)
+        return
+
+    score_dict = {
+        uid: {
+            "target_scores": [None] * len(target_proteins),
+            "antitarget_scores": [None] * len(antitarget_proteins)
+        }
+        for uid in uid_to_data
+    }
+
+    # Score all target proteins then all antitarget proteins one protein at a time
+    for i, target_protein in enumerate(target_proteins):
+        score_protein_for_all_uids(
+            protein=target_protein,
+            score_dict=score_dict,
+            uid_to_data=uid_to_data,
+            col_idx=i,
+            is_target=True
+        )
+    for j, anti_protein in enumerate(antitarget_proteins):
+        score_protein_for_all_uids(
+            protein=anti_protein,
+            score_dict=score_dict,
+            uid_to_data=uid_to_data,
+            col_idx=j,
+            is_target=False
+        )
+
+    submissions = determine_winner(score_dict, uid_to_data)
+    submit_results({
+        "competition": competition,
+        "submissions": submissions
+    })
+
+    try:
+        import json
+        import os
+        os.makedirs("results", exist_ok=True)
+        epoch = current_block // config.epoch_length - 1
+        results_file = f"results/submissions_epoch_{epoch}.json"   
+        with open(results_file, "w") as f:
+            json.dump({
+                "competition": competition,
+                "submissions": submissions
+            }, f, indent=4)
+        bt.logging.success(f"Results saved to {results_file}")
+    except Exception as e:
+        bt.logging.error(f"Error saving results to file: {e}")
 
 async def main(config):
     """
@@ -337,6 +441,9 @@ async def main(config):
     # Initialize the asynchronous subtensor client.
     subtensor = bt.async_subtensor(network=config.network)
     await subtensor.initialize()
+#    await score_epoch(subtensor, 14644)
+    await score_epoch(subtensor, 14645)
+    
 
     tolerance = 3 # block tolerance window for validators to commit protein
 
