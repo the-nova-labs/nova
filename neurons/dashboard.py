@@ -442,7 +442,9 @@ async def main(config):
     subtensor = bt.async_subtensor(network=config.network)
     await subtensor.initialize()
 #    await score_epoch(subtensor, 14644)
-    await score_epoch(subtensor, 14645)
+#    await score_epoch(subtensor, 14688)    
+    await score_epoch(subtensor, 14689)    
+   #  await score_epoch(subtensor, 14690)
     
 
     tolerance = 3 # block tolerance window for validators to commit protein
